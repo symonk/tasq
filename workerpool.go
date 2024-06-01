@@ -1,0 +1,74 @@
+package workerpool
+
+import (
+	"context"
+)
+
+type Func func()
+
+type Scheduler interface {
+	start()
+	Stop()
+	Throttle(ctx context.Context)
+	Enqueue(task Func)
+	EnqueueWait(ctx context.Context, task Func)
+}
+
+// WorkerPool is the core scheduler.  It internally manages
+// a task queue and various workers up to the worker count.
+type WorkerPool struct {
+	workerCount int
+	taskQueue   chan Func
+	workerQueue chan Func
+	finished    chan struct{}
+}
+
+// New returns a new instance (ptr) of a worker pool and
+// schedules it to start accepting tasks in parallel.
+func New(maxWorkers int) *WorkerPool {
+	wp := &WorkerPool{
+		workerCount: maxWorkers,
+		taskQueue:   make(chan Func),
+		workerQueue: make(chan Func),
+		finished:    make(chan struct{}),
+	}
+	go wp.start()
+
+	return wp
+}
+
+// Start initialises the worker pool ready to accept
+// work from the client.  This is automatically invoked
+// during initialisation and is run in a goroutine.
+func (w *WorkerPool) start() {
+
+}
+
+// Stop prevents more work from being pushed on to the worker pool
+// and waits for all workers to clear down their work and the
+// remaining task queue before gracefully exiting.
+func (w *WorkerPool) Stop() {
+
+}
+
+// Throttle prevents workers from carrying out task execution.
+// Useful if you need your workloads to be delayed for a duration.
+// This does not prevent more tasks being enqueued onto the task
+// queue, it simply puts all workers into an idle state after
+// they have completed their pending task
+func (w *WorkerPool) Throttle(ctx context.Context) {
+}
+
+// Enqueue registers a task to the task queue ready to be picked
+// up when workers are available.
+func (w *WorkerPool) Enqueue(task Func) {
+
+}
+
+// EnqueueWait registers a task to the task queue but is blocking
+// until the task has been completed by a worker.  A context can be
+// provided to break out when required should the processing be
+// taking longer than expected.
+func (w *WorkerPool) EnqueueWait(task Func) {
+
+}
