@@ -13,8 +13,11 @@ const (
 	_                = scaleDownTimeout
 )
 
+// Task is an encapsulation of a callable piece of work
 type Task func()
 
+// Scheduler is the core interface for something which can
+// take and process tasks in a distributed manner.
 type Scheduler interface {
 	start()
 	Stop()
