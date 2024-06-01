@@ -3,6 +3,11 @@ package workerpool
 import (
 	"context"
 	"sync"
+	"time"
+)
+
+const (
+	scaleDownTimeout = time.Second
 )
 
 type Task func()
@@ -15,6 +20,7 @@ type Scheduler interface {
 	Throttled() bool
 	Enqueue(task Task)
 	EnqueueWait(ctx context.Context, task Task)
+	flushTaskQueue()
 }
 
 // WorkerPool is the core scheduler.  It internally manages
@@ -53,7 +59,7 @@ func (w *WorkerPool) Length() int {
 
 // Stopped returns if the workerpool is in a stopped
 // state
-func (w *WorkerPool) Stop() bool {
+func (w *WorkerPool) Stopped() bool {
 	return false
 }
 
@@ -98,4 +104,10 @@ func (w *WorkerPool) Enqueue(task Task) {
 func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 	done := make(chan struct{})
 	<-done
+}
+
+// FlushedQueuedTasks ensures the task queue is completely flushed
+// through to the workers and finalised.
+func (w *WorkerPool) flushTaskQueue() {
+
 }
