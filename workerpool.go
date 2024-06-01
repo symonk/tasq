@@ -7,7 +7,10 @@ import (
 )
 
 const (
+	// When worker has processed no work for this duration, scale
+	// them down.
 	scaleDownTimeout = time.Second
+	_                = scaleDownTimeout
 )
 
 type Task func()
