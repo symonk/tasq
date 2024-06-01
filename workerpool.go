@@ -4,32 +4,36 @@ import (
 	"context"
 )
 
-type Func func()
+type Task func()
 
 type Scheduler interface {
 	start()
 	Stop()
 	Throttle(ctx context.Context)
-	Enqueue(task Func)
-	EnqueueWait(ctx context.Context, task Func)
+	Enqueue(task Task)
+	EnqueueWait(ctx context.Context, task Task)
 }
 
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
 type WorkerPool struct {
 	workerCount int
-	taskQueue   chan Func
-	workerQueue chan Func
+	taskQueue   chan Task
+	workerQueue chan Task
 	finished    chan struct{}
 }
+
+// Verify the workerpool adheres to the Scheduler interface
+// at compile time.
+var _ Scheduler = (*WorkerPool)(nil)
 
 // New returns a new instance (ptr) of a worker pool and
 // schedules it to start accepting tasks in parallel.
 func New(maxWorkers int) *WorkerPool {
 	wp := &WorkerPool{
 		workerCount: maxWorkers,
-		taskQueue:   make(chan Func),
-		workerQueue: make(chan Func),
+		taskQueue:   make(chan Task),
+		workerQueue: make(chan Task),
 		finished:    make(chan struct{}),
 	}
 	go wp.start()
@@ -67,7 +71,7 @@ func (w *WorkerPool) Throttle(ctx context.Context) {
 
 // Enqueue registers a task to the task queue ready to be picked
 // up when workers are available.
-func (w *WorkerPool) Enqueue(task Func) {
+func (w *WorkerPool) Enqueue(task Task) {
 
 }
 
@@ -75,6 +79,6 @@ func (w *WorkerPool) Enqueue(task Func) {
 // until the task has been completed by a worker.  A context can be
 // provided to break out when required should the processing be
 // taking longer than expected.
-func (w *WorkerPool) EnqueueWait(task Func) {
+func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 
 }
