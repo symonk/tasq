@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"context"
+	"sync"
 )
 
 type Task func()
@@ -9,7 +10,9 @@ type Task func()
 type Scheduler interface {
 	start()
 	Stop()
+	Stopped() bool
 	Throttle(ctx context.Context)
+	Throttled() bool
 	Enqueue(task Task)
 	EnqueueWait(ctx context.Context, task Task)
 }
@@ -20,6 +23,7 @@ type WorkerPool struct {
 	workerCount int
 	taskQueue   chan Task
 	workerQueue chan Task
+	stopper     sync.Mutex
 	finished    chan struct{}
 }
 
@@ -45,6 +49,18 @@ func New(maxWorkers int) *WorkerPool {
 // workers that can handle work in the pool.
 func (w *WorkerPool) Length() int {
 	return w.workerCount
+}
+
+// Stopped returns if the workerpool is in a stopped
+// state
+func (w *WorkerPool) Stop() bool {
+	return false
+}
+
+// Throttled returns if the workerpool is in a throttled
+// state
+func (w *WorkerPool) Throttled() bool {
+	return false
 }
 
 // Start initialises the worker pool ready to accept
