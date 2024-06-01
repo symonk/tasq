@@ -80,5 +80,6 @@ func (w *WorkerPool) Enqueue(task Task) {
 // provided to break out when required should the processing be
 // taking longer than expected.
 func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
-
+	done := make(chan struct{})
+	<-done
 }
