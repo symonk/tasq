@@ -32,11 +32,12 @@ type Scheduler interface {
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
 type WorkerPool struct {
-	workerCount int
-	taskQueue   chan Task
-	workerQueue chan Task
-	stopper     sync.Mutex
-	finished    chan struct{}
+	workerCount  int
+	taskQueue    chan Task
+	workerQueue  chan Task
+	stopped      bool
+	stoppedMutex sync.Mutex
+	finished     chan struct{}
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -66,7 +67,9 @@ func (w *WorkerPool) Length() int {
 // Stopped returns if the workerpool is in a stopped
 // state
 func (w *WorkerPool) Stopped() bool {
-	return false
+	w.stoppedMutex.Lock()
+	defer w.stoppedMutex.Unlock()
+	return w.stopped
 }
 
 // Throttled returns if the workerpool is in a throttled
