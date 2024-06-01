@@ -37,6 +37,12 @@ func New(maxWorkers int) *WorkerPool {
 	return wp
 }
 
+// Length returns the total number of maximum
+// workers that can handle work in the pool.
+func (w *WorkerPool) Length() int {
+	return w.workerCount
+}
+
 // Start initialises the worker pool ready to accept
 // work from the client.  This is automatically invoked
 // during initialisation and is run in a goroutine.
