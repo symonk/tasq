@@ -6,6 +6,9 @@
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/symonk/tasq/blob/master/LICENSE)
 
 
+> [!CAUTION]
+> tasq is currently in alpha and not fit for production level use.
+
 # Tasq (Task Queue)
 
 `tasq` is a high performance worker pool for distributing tasks across a collection of worker
