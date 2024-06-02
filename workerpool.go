@@ -2,7 +2,6 @@ package workerpool
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -16,7 +15,7 @@ type Option func(*WorkerPool)
 func WithMaxWorkers(workers int) Option {
 	return func(w *WorkerPool) {
 		workers = validateMaxWorkers(workers)
-		w.workerCount = workers
+		w.maximumWorkers = workers
 	}
 }
 
@@ -25,15 +24,15 @@ func WithMaxWorkers(workers int) Option {
 // they are shutdown.
 func WithIdleTimeout(timeout time.Duration) Option {
 	return func(w *WorkerPool) {
-		w.idleTimeout = timeout
+		w.scalingTimeout = timeout
 	}
 }
 
-// WithWorkerQueueBuffer is a functional option to control the
+// WithWaitingQueueBuffer is a functional option to control the
 // buffer size for the worker queue.
-func WithWorkerQueueBuffer(size int) Option {
+func WithWaitingQueueBuffer(size int) Option {
 	return func(w *WorkerPool) {
-		w.workerBufferSize = size
+		w.waitingQueue = make(chan Task, size)
 	}
 }
 
@@ -58,18 +57,22 @@ type Scheduler interface {
 // careful with memory consumption.  The plan is too expose
 // new options to configure buffers (if desired) in future.
 type WorkerPool struct {
-	workerCount      int
-	idleTimeout      time.Duration
-	taskQueue        chan Task
-	workerQueue      chan Task
-	workerBufferSize int
-	totalQueued      int32
-	stopSignal       chan struct{}
-	stopped          bool
-	throttled        bool
-	wpMutex          sync.Mutex
-	finished         chan struct{}
-	wg               sync.WaitGroup
+	maximumWorkers int
+	scalingTimeout time.Duration
+	// The initial Queue for tasks enqueued (unbuffered)
+	incomingQueue chan Task
+	// The interim holding pen before workers can process them
+	waitingQueue     chan Task
+	waitingQueueSize int32
+	// Tasks for workers that have been moved from the interim queue
+	workerQueue chan Task
+
+	stopSignal chan struct{}
+	stopped    bool
+	stalled    bool
+	wpMutex    sync.Mutex
+	completed  chan struct{}
+	wg         sync.WaitGroup
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -80,13 +83,16 @@ var _ Scheduler = (*WorkerPool)(nil)
 // schedules it to start accepting tasks in parallel.
 func New(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
-		workerCount: 1,
-		taskQueue:   make(chan Task),
-		// TODO: This is plain wrong, should the option just provide the channel? feels yucky if so!
-		workerQueue: make(chan Task, 1),
-		stopSignal:  make(chan struct{}),
-		finished:    make(chan struct{}),
+		// Can be configured with WithMaxWorkerCount option
+		maximumWorkers: 1,
+		incomingQueue:  make(chan Task),
+		// Can be configured with WithWaitingQueueSize option
+		waitingQueue: make(chan Task, 10),
+		workerQueue:  make(chan Task),
+		stopSignal:   make(chan struct{}),
+		completed:    make(chan struct{}),
 	}
+
 	for _, opt := range opts {
 		opt(wp)
 	}
@@ -98,15 +104,15 @@ func New(opts ...Option) *WorkerPool {
 // Length returns the total number of maximum
 // workers that can handle work in the pool.
 func (w *WorkerPool) Length() int {
-	return w.workerCount
+	return w.maximumWorkers
 }
 
-// Waiting returns the total number of tasks currently
+// WaitQueueSize returns the total number of tasks currently
 // in the interim (wait) queue.  Those that have been
 // processed from the internal task queue but are waiting
 // for a worker to be free.
-func (w *WorkerPool) Waiting() int32 {
-	return atomic.LoadInt32(&w.totalQueued)
+func (w *WorkerPool) WaitQueueSize() int32 {
+	return atomic.LoadInt32(&w.waitingQueueSize)
 }
 
 // Stopped returns if the workerpool is in a stopped
@@ -122,15 +128,16 @@ func (w *WorkerPool) Stopped() bool {
 func (w *WorkerPool) Stalled() bool {
 	w.wpMutex.Lock()
 	defer w.wpMutex.Unlock()
-	return w.throttled
+	return w.stalled
 }
 
 // Start initialises the worker pool ready to accept
 // work from the client.  This is automatically invoked
 // during initialisation and is run in a goroutine.
 func (w *WorkerPool) start() {
-	defer close(w.finished)
-	idleChecker := time.NewTimer(w.idleTimeout)
+	defer close(w.completed)
+	hasBeenIdle := false
+	idleChecker := time.NewTimer(w.scalingTimeout)
 
 	var currentWorkers int
 	ctx, cancel := context.WithCancel(context.Background())
@@ -140,34 +147,38 @@ core:
 	// The core worker pool loop
 	for {
 		select {
-		case task, ok := <-w.taskQueue:
+		case task, ok := <-w.incomingQueue:
 			if !ok {
-				// The task queue has been closed and work processed.
-				// It's ok to exit the pool.  client code has invoked
-				// Shutdown()
-				// TODO: What do we do here about the tasks in the worker queues?
+				// The worker incomingQueue has been closed.
 				break core
 			}
-			if currentWorkers < w.workerCount {
-				// Spawn a new worker, we are not at capacity.
-				w.wg.Add(1)
-				go w.worker(ctx, task)
-				currentWorkers++
-			} else {
-				// Workers are at spawned capacity, throw it onto the worker queue
-				// for a worker to process in future.
-				w.workerQueue <- task
-				atomic.StoreInt32(&w.totalQueued, int32(len(w.workerQueue)))
-
+			select {
+			// Attempt to store the task directly into the worker queue
+			case w.workerQueue <- task:
+			default:
+				if currentWorkers < w.maximumWorkers {
+					// The worker queue was blocking (full), launch another worker and pass it the
+					// task to handle directly, it will continue polling for future work from the
+					// worker queue.
+					w.wg.Add(1)
+					go w.worker(ctx, task)
+					currentWorkers++
+				} else {
+					// We have the full capacity of workers and the worker queue is blocking.  Store
+					// the task in the waiting queue to be picked up by a worker when available.
+					// atomically keep the queue size accurate.
+					w.workerQueue <- task
+					atomic.StoreInt32(&w.waitingQueueSize, w.WaitQueueSize())
+				}
+				hasBeenIdle = false
 			}
 
-		// TODO: Implement dynamic worker scaling here; if many workers have been
-		// idling for a long time, consider scaling them down and reducing the
-		// worker count
 		case <-idleChecker.C:
-			fmt.Println("idle.")
-			currentWorkers--
-			idleChecker.Reset(w.idleTimeout)
+			if !hasBeenIdle && currentWorkers < w.maximumWorkers {
+				currentWorkers--
+				idleChecker.Reset(w.scalingTimeout)
+				hasBeenIdle = true
+			}
 		}
 	}
 	// Wait for all workers to clear down their queues.
@@ -178,7 +189,7 @@ core:
 // and waits for all workers to clear down their work and the
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
-	close(w.taskQueue)
+	close(w.incomingQueue)
 	w.wg.Wait()
 }
 
@@ -195,7 +206,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 // find their way into the queues.
 func (w *WorkerPool) Enqueue(task Task) {
 	if task != nil {
-		w.taskQueue <- task
+		w.incomingQueue <- task
 	}
 }
 
@@ -209,7 +220,7 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 		return
 	}
 	done := make(chan struct{})
-	w.taskQueue <- func() {
+	w.incomingQueue <- func() {
 		task()
 		done <- struct{}{}
 		close(done)
@@ -243,13 +254,11 @@ func (w *WorkerPool) worker(ctx context.Context, task Task) {
 			return
 		default:
 			for task != nil {
-				fmt.Println("Firing Task")
 				task()
 				task = <-w.workerQueue
 			}
 		}
 	}
-	fmt.Println("Worker exiting")
 }
 
 // validateMaxWorkers ensures the worker pool is correctly configured
