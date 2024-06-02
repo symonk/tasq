@@ -142,7 +142,6 @@ core:
 				wg.Add(1)
 				go w.worker(exit, &wg)
 				runningCount++
-				w.waitingQueue <- task
 			} else {
 				// All workers are active, push the task onto a queue for the
 				// worker to process later.
