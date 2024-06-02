@@ -15,7 +15,7 @@ at any point in time.
 If you have a bunch of tasks to do and want an easy way to distribute them in a parallel manner without
 the hassle of managing worker dispatching yourself `tasq` is for you. 
 
-> CAUTION!
+> [!NOTE]
 > By design `tasq` does not propagate errors or return values, have your tasks listen on a channel for
 > return values etc.
 
