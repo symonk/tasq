@@ -18,7 +18,5 @@ jobs:
           go-version: ${{ matrix.go-version }}
       - name: Install dependencies
         run: go get .
-      - name: Build
-        run: go build -v ./...
       - name: Test
         run: go test -race -buildvcs ./...
