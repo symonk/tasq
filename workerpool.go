@@ -2,7 +2,9 @@ package workerpool
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -33,24 +35,28 @@ type Task func()
 // Scheduler is the core interface for something which can
 // take and process tasks in a distributed manner.
 type Scheduler interface {
-	start()
 	Shutdown()
 	Stopped() bool
 	Throttle(ctx context.Context)
 	Throttled() bool
 	Enqueue(task Task)
 	EnqueueWait(ctx context.Context, task Task)
-	flushTaskQueue()
 }
 
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
+// The Workerpool currently does not (yet) support a buffered
+// task queue and the interim queue can grow unbounded.  Be
+// careful with memory consumption.  The plan is too expose
+// new options to configure buffers (if desired) in future.
 type WorkerPool struct {
 	workerCount  int
 	idleTimeout  time.Duration
 	taskQueue    chan Task
 	workerQueue  chan Task
-	interimQueue chan Task
+	waitingQueue chan Task
+	waiting      int64
+	stopSignal   chan struct{}
 	stopped      bool
 	throttled    bool
 	wpMutex      sync.Mutex
@@ -68,6 +74,7 @@ func New(opts ...Option) *WorkerPool {
 		workerCount: 1,
 		taskQueue:   make(chan Task),
 		workerQueue: make(chan Task),
+		stopSignal:  make(chan struct{}),
 		finished:    make(chan struct{}),
 	}
 	for _, opt := range opts {
@@ -82,6 +89,14 @@ func New(opts ...Option) *WorkerPool {
 // workers that can handle work in the pool.
 func (w *WorkerPool) Length() int {
 	return w.workerCount
+}
+
+// Waiting returns the total number of tasks currently
+// in the interim (wait) queue.  Those that have been
+// processed from the internal task queue but are waiting
+// for a worker to be free.
+func (w *WorkerPool) Waiting() int64 {
+	return atomic.LoadInt64(&w.waiting)
 }
 
 // Stopped returns if the workerpool is in a stopped
@@ -112,6 +127,20 @@ func (w *WorkerPool) start() {
 
 	var runningCount int
 	_ = runningCount
+
+	// The core worker pool loop
+core:
+	for {
+		select {
+		case t := <-w.taskQueue:
+			fmt.Println("got a task")
+			w.waitingQueue <- t
+		case <-w.stopSignal:
+			fmt.Println("Exiting...")
+			break core
+		}
+
+	}
 
 }
 
