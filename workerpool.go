@@ -29,6 +29,14 @@ func WithIdleTimeout(timeout time.Duration) Option {
 	}
 }
 
+// WithWorkerQueueBuffer is a functional option to control the
+// buffer size for the worker queue.
+func WithWorkerQueueBuffer(size int) Option {
+	return func(w *WorkerPool) {
+		w.workerBufferSize = size
+	}
+}
+
 // Task is an encapsulation of a callable piece of work
 type Task func()
 
@@ -50,16 +58,18 @@ type Scheduler interface {
 // careful with memory consumption.  The plan is too expose
 // new options to configure buffers (if desired) in future.
 type WorkerPool struct {
-	workerCount int
-	idleTimeout time.Duration
-	taskQueue   chan Task
-	workerQueue chan Task
-	totalQueued int32
-	stopSignal  chan struct{}
-	stopped     bool
-	throttled   bool
-	wpMutex     sync.Mutex
-	finished    chan struct{}
+	workerCount      int
+	idleTimeout      time.Duration
+	taskQueue        chan Task
+	workerQueue      chan Task
+	workerBufferSize int
+	totalQueued      int32
+	stopSignal       chan struct{}
+	stopped          bool
+	throttled        bool
+	wpMutex          sync.Mutex
+	finished         chan struct{}
+	wg               sync.WaitGroup
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -72,7 +82,7 @@ func New(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
 		workerCount: 1,
 		taskQueue:   make(chan Task),
-		workerQueue: make(chan Task),
+		workerQueue: make(chan Task, 1),
 		stopSignal:  make(chan struct{}),
 		finished:    make(chan struct{}),
 	}
@@ -120,7 +130,6 @@ func (w *WorkerPool) Throttled() bool {
 func (w *WorkerPool) start() {
 	defer close(w.finished)
 	idleChecker := time.NewTimer(w.idleTimeout)
-	var wg sync.WaitGroup
 
 	var currentWorkers int
 	ctx := context.WithoutCancel(context.Background())
@@ -137,30 +146,18 @@ core:
 				// TODO: What do we do here about the tasks in the worker queues?
 				break core
 			}
-			// TODO: bug here; blocking, its not buffered but no guarantee default would of fired atleast
-			// once to get a worker off the ground
-			w.workerQueue <- task
-		default:
-			// We are not running at worker capacity; there is no
-			// need to store the tasks; spawn a new worker and directly
-			// have it process the task.
-			select {
-			case task, ok := <-w.taskQueue:
-				if !ok {
-					break core
-				}
-				if currentWorkers < w.workerCount {
-					wg.Add(1)
-					go w.worker(ctx, task, &wg)
-					currentWorkers++
-				} else {
-					w.workerQueue <- task
-					atomic.StoreInt32(&w.totalQueued, int32(len(w.workerQueue)))
-				}
-			// We haven't had many tasks coming in recently; Let's check workers
-			// and dynamically downsize if required.
-			case <-idleChecker.C:
-				idleChecker.Reset(w.idleTimeout)
+			if currentWorkers < w.workerCount {
+				// Spawn a new worker, we are not at capacity.
+				w.wg.Add(1)
+				go w.worker(ctx, task)
+				currentWorkers++
+			} else {
+				// We are not running at worker capacity; there is no
+				// need to store the tasks; spawn a new worker and directly
+				// have it process the task.
+				w.workerQueue <- task
+				atomic.StoreInt32(&w.totalQueued, int32(len(w.workerQueue)))
+
 			}
 
 		// TODO: Implement dynamic worker scaling here; if many workers have been
@@ -169,10 +166,11 @@ core:
 		case <-idleChecker.C:
 			fmt.Println("idle.")
 			currentWorkers--
+			idleChecker.Reset(w.idleTimeout)
 		}
 	}
 	// Wait for all workers to clear down their queues.
-	wg.Wait()
+	w.wg.Wait()
 }
 
 // Shutdown prevents more work from being pushed on to the worker pool
@@ -180,6 +178,7 @@ core:
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
 	close(w.taskQueue)
+	w.wg.Wait()
 }
 
 // Throttle prevents workers from carrying out task execution.
@@ -235,19 +234,21 @@ func (w *WorkerPool) flushTaskQueue() {
 // worker continiously pulls work off the worker queue after it has received
 // its first task directly from the core start loop.  It will sit idling on
 // the workerQueue for future work.
-func (w *WorkerPool) worker(ctx context.Context, task Task, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (w *WorkerPool) worker(ctx context.Context, task Task) {
+	defer w.wg.Done()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		default:
 			for task != nil {
+				fmt.Println("Firing Task")
 				task()
 				task = <-w.workerQueue
 			}
 		}
 	}
+	fmt.Println("Worker exiting")
 }
 
 // validateMaxWorkers ensures the worker pool is correctly configured

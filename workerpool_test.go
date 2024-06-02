@@ -29,13 +29,14 @@ func TestWaitingQueueSize(t *testing.T) {
 }
 
 func TestTasksAreActuallyProcessed(t *testing.T) {
-	pool := New()
-	results := make(chan bool)
-	for i := 0; i < 3; i++ {
+	pool := New(WithMaxWorkers(10), WithIdleTimeout(3*time.Second))
+	start := time.Now()
+	for i := 0; i < 10; i++ {
 		pool.Enqueue(func() {
 			time.Sleep(time.Second)
-			results <- true
 		})
 	}
 	pool.Shutdown()
+	dur := time.Since(start)
+	assert.Less(t, dur, 5)
 }
