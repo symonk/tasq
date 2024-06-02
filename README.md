@@ -40,6 +40,8 @@ func main() {
 	)
 
 	// Enqueue some tasks, a Task is a simple func()
+	// This is non blocking and the tasks will eventually be 
+	// processed, if you need to wait for a task, see `EnqueueWait` below.
 	for i := 0; i < 10; i++ {
 		pool.Enqueue(func() {
 			i := i
