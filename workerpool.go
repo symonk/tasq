@@ -111,11 +111,8 @@ func (w *WorkerPool) start() {
 	wg.Add(w.workerCount)
 
 	var runningCount int
+	_ = runningCount
 
-core:
-	for {
-
-	}
 }
 
 // Shutdown prevents more work from being pushed on to the worker pool
