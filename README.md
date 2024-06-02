@@ -12,6 +12,13 @@
 goroutines.  `tasq` is dynamic in nature and auto scales depending on the number of work available
 at any point in time.
 
+If you have a bunch of tasks to do and want an easy way to distribute them in a parallel manner without
+the hassle of managing worker dispatching yourself `tasq` is for you. 
+
+> CAUTION!
+> By design `tasq` does not propagate errors or return values, have your tasks listen on a channel for
+> return values etc.
+
 -----
 
 ### Quickstart:
