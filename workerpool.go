@@ -2,7 +2,6 @@ package workerpool
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -126,17 +125,20 @@ func (w *WorkerPool) start() {
 	wg.Add(w.workerCount)
 
 	var runningCount int
-	_ = runningCount
 
 	// The core worker pool loop
 core:
 	for {
 		select {
-		case t := <-w.taskQueue:
-			fmt.Println("got a task")
-			w.waitingQueue <- t
+		case t, ok := <-w.taskQueue:
+			if !ok {
+				// We are not running at capacity.
+				if runningCount < w.workerCount {
+
+				}
+				w.waitingQueue <- t
+			}
 		case <-w.stopSignal:
-			fmt.Println("Exiting...")
 			break core
 		}
 

@@ -9,7 +9,8 @@
 # Tasq
 
 `tasq` is a high performance worker pool for distributing tasks across a collection of worker
-goroutines.
+goroutines.  `tasq` is dynamic in nature and auto scales depending on the number of work available
+at any point in time.
 
 -----
 
