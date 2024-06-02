@@ -137,7 +137,8 @@ core:
 				// TODO: What do we do here about the tasks in the worker queues?
 				break core
 			}
-			// Shove the task onto the queue for workers to process.
+			// TODO: bug here; blocking, its not buffered but no guarantee default would of fired atleast
+			// once to get a worker off the ground
 			w.workerQueue <- task
 		default:
 			// We are not running at worker capacity; there is no

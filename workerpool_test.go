@@ -28,11 +28,12 @@ func TestWaitingQueueSize(t *testing.T) {
 	assert.Zero(t, pool.Waiting())
 }
 
-func TasksAreActuallyProcessed(t *testing.T) {
+func TestTasksAreActuallyProcessed(t *testing.T) {
 	pool := New()
 	results := make(chan bool)
 	for i := 0; i < 3; i++ {
 		pool.Enqueue(func() {
+			time.Sleep(time.Second)
 			results <- true
 		})
 	}
