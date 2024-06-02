@@ -18,22 +18,32 @@ at any point in time.
 
 ```go
 
+package main
+
 import (
     "github.com/symonk/tasq"
 )
 
 func main() {
-    
-    // Configure and launch a new pool
-    pool := tasq.New(WithMaxWorkers(10), withIdleTimeout(2 * time.Seconds))
-    defer pool.Shutdown()
+	// Instantiate a pool with whatever options fit your needs.
+	pool := New(
+		WithMaxWorkers(10),
+		WithIdleTimeout(time.Second),
+		WithWaitingQueueBuffer(30),
+	)
+	// Defer the pool toshutdown, this is blocking until tasks have finished.
+	defer pool.Shutdown()
 
-    // Send tasks to the pool
-    for i := 0; i < 10; i++ { 
-        pool.Enqueue(func() {
-            fmt.Println(i)
-        }(i))
-    }
+	// Enqueue some tasks, a Task is a simple func()
+	for i := 0; i < 10; i++ {
+		pool.Enqueue(func() {
+			i := i
+			time.Sleep(time.Duration(i) * time.Microsecond)
+		})
+	}
 }
 
 ```
+
+-----
+
