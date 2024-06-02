@@ -21,4 +21,8 @@ jobs:
       - name: Vet
         run: go get ./...
       - name: Test
-        run: go test -race -buildvcs ./...
+        run: go test -race -buildvcs -covermode=atomic -coverprofile=coverage.out
+      - name: Upload Code Coverage
+        uses: codecov/codecov-action@v4.0.1
+        with:
+          token: ${{ secrets.CODECOV_TOKEN}}
