@@ -50,17 +50,16 @@ type Scheduler interface {
 // careful with memory consumption.  The plan is too expose
 // new options to configure buffers (if desired) in future.
 type WorkerPool struct {
-	workerCount  int
-	idleTimeout  time.Duration
-	taskQueue    chan Task
-	workerQueue  chan Task
-	waitingQueue chan Task
-	waiting      int64
-	stopSignal   chan struct{}
-	stopped      bool
-	throttled    bool
-	wpMutex      sync.Mutex
-	finished     chan struct{}
+	workerCount int
+	idleTimeout time.Duration
+	taskQueue   chan Task
+	workerQueue chan Task
+	totalQueued int32
+	stopSignal  chan struct{}
+	stopped     bool
+	throttled   bool
+	wpMutex     sync.Mutex
+	finished    chan struct{}
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -95,8 +94,8 @@ func (w *WorkerPool) Length() int {
 // in the interim (wait) queue.  Those that have been
 // processed from the internal task queue but are waiting
 // for a worker to be free.
-func (w *WorkerPool) Waiting() int64 {
-	return atomic.LoadInt64(&w.waiting)
+func (w *WorkerPool) Waiting() int32 {
+	return atomic.LoadInt32(&w.totalQueued)
 }
 
 // Stopped returns if the workerpool is in a stopped
@@ -120,11 +119,10 @@ func (w *WorkerPool) Throttled() bool {
 // during initialisation and is run in a goroutine.
 func (w *WorkerPool) start() {
 	defer close(w.finished)
-	idle := time.NewTimer(w.idleTimeout)
+	idleChecker := time.NewTimer(w.idleTimeout)
 	var wg sync.WaitGroup
-	defer wg.Wait()
 
-	var runningCount int
+	var currentWorkers int
 	exit := context.WithoutCancel(context.Background())
 
 core:
@@ -133,36 +131,54 @@ core:
 		select {
 		case task, ok := <-w.taskQueue:
 			if !ok {
+				// The task queue has been closed and work processed.
+				// It's ok to exit the pool.  client code has invoked
+				// Shutdown()
+				// TODO: What do we do here about the tasks in the worker queues?
 				break core
 			}
+			// Shove the task onto the queue for workers to process.
+			w.workerQueue <- task
+		default:
 			// We are not running at worker capacity; there is no
 			// need to store the tasks; spawn a new worker and directly
 			// have it process the task.
-			if runningCount < w.workerCount {
-				wg.Add(1)
-				go w.worker(exit, &wg)
-				runningCount++
-			} else {
-				// All workers are active, push the task onto a queue for the
-				// worker to process later.
-				w.waitingQueue <- task
-				atomic.StoreInt64(&w.waiting, w.Waiting())
+			select {
+			case task, ok := <-w.taskQueue:
+				if !ok {
+					break core
+				}
+				if currentWorkers < w.workerCount {
+					wg.Add(1)
+					go w.worker(exit, &wg)
+					currentWorkers++
+				} else {
+					w.workerQueue <- task
+					atomic.StoreInt32(&w.totalQueued, int32(len(w.workerQueue)))
+				}
+			// We haven't had many tasks coming in recently; Let's check workers
+			// and dynamically downsize if required.
+			case <-idleChecker.C:
+				idleChecker.Reset(w.idleTimeout)
 			}
 
-			// TODO: What to do if the taskQueue channel was closed?
-			// We still need to wait for work to be finished in the other queues
-		case <-idle.C:
-			fmt.Println("Worker is idle!")
+		// TODO: Implement dynamic worker scaling here; if many workers have been
+		// idling for a long time, consider scaling them down and reducing the
+		// worker count
+		case <-idleChecker.C:
+			fmt.Println("idle.")
+			currentWorkers--
 		}
-
 	}
+	// Wait for all workers to clear down their queues.
+	wg.Wait()
 }
 
 // Shutdown prevents more work from being pushed on to the worker pool
 // and waits for all workers to clear down their work and the
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
-
+	close(w.taskQueue)
 }
 
 // Throttle prevents workers from carrying out task execution.
@@ -215,18 +231,20 @@ func (w *WorkerPool) flushTaskQueue() {
 
 }
 
-// worker is responsible for retrieve worker tasks off the
-// queue and executing them.  Worker blocks if there are not
-// tasks for it to process.
-func (w *WorkerPool) worker(ctx context.Context, wg *sync.WaitGroup) {
+// worker continiously pulls work off the worker queue after it has received
+// its first task directly from the core start loop.  It will sit idling on
+// the workerQueue for future work.
+func (w *WorkerPool) worker(ctx context.Context, task Task, wg *sync.WaitGroup) {
 	defer wg.Done()
 	for {
 		select {
-		case task := <-w.workerQueue:
-			task()
-		// TODO: This is no good; could leave worker queue tasks unprocessed?
 		case <-ctx.Done():
 			return
+		default:
+			for task != nil {
+				task()
+				task = <-w.workerQueue
+			}
 		}
 	}
 }

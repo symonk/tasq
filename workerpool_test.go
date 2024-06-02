@@ -26,5 +26,15 @@ func TestIdleWorkoutTieout(t *testing.T) {
 func TestWaitingQueueSize(t *testing.T) {
 	pool := New()
 	assert.Zero(t, pool.Waiting())
+}
 
+func TasksAreActuallyProcessed(t *testing.T) {
+	pool := New()
+	results := make(chan bool)
+	for i := 0; i < 3; i++ {
+		pool.Enqueue(func() {
+			results <- true
+		})
+	}
+	pool.Shutdown()
 }
