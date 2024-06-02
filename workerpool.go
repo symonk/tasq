@@ -53,14 +53,15 @@ type Scheduler interface {
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
 type WorkerPool struct {
-	workerCount int
-	idleTimeout time.Duration
-	taskQueue   chan Task
-	workerQueue chan Task
-	stopped     bool
-	throttled   bool
-	wpMutex     sync.Mutex
-	finished    chan struct{}
+	workerCount  int
+	idleTimeout  time.Duration
+	taskQueue    chan Task
+	workerQueue  chan Task
+	interimQueue chan Task
+	stopped      bool
+	throttled    bool
+	wpMutex      sync.Mutex
+	finished     chan struct{}
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -137,7 +138,8 @@ func (w *WorkerPool) Throttle(ctx context.Context) {
 }
 
 // Enqueue registers a task to the task queue ready to be picked
-// up when workers are available.
+// up when workers are available.  Ensures that nil values cannot
+// find their way into the queues.
 func (w *WorkerPool) Enqueue(task Task) {
 	if task != nil {
 		w.taskQueue <- task
@@ -147,10 +149,28 @@ func (w *WorkerPool) Enqueue(task Task) {
 // EnqueueWait registers a task to the task queue but is blocking
 // until the task has been completed by a worker.  A context can be
 // provided to break out when required should the processing be
-// taking longer than expected.
+// taking longer than expected.  Ensures nil values cannot make their
+// way onto the queues.
 func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
+	if task == nil {
+		return
+	}
 	done := make(chan struct{})
-	<-done
+	w.taskQueue <- func() {
+		task()
+		done <- struct{}{}
+		close(done)
+	}
+	for {
+		select {
+		// The worker pool has finished the task
+		case <-done:
+			return
+		// The task took too long, consider it aborted.
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // FlushedQueuedTasks ensures the task queue is completely flushed
