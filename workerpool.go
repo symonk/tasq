@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -136,7 +137,7 @@ func (w *WorkerPool) Stalled() bool {
 // during initialisation and is run in a goroutine.
 func (w *WorkerPool) start() {
 	defer close(w.completed)
-	hasBeenIdle := false
+	var canDownScale bool
 	idleChecker := time.NewTimer(w.scalingTimeout)
 
 	var currentWorkers int
@@ -170,14 +171,17 @@ core:
 					w.workerQueue <- task
 					atomic.StoreInt32(&w.waitingQueueSize, w.WaitQueueSize())
 				}
-				hasBeenIdle = false
 			}
+			canDownScale = false
 
 		case <-idleChecker.C:
-			if !hasBeenIdle && currentWorkers < w.maximumWorkers {
+			// Continue for now; not sure how to actually scale down workers
+			// What if a worker actually has work in their queue?
+			continue
+			if canDownScale && currentWorkers > 0 {
 				currentWorkers--
 				idleChecker.Reset(w.scalingTimeout)
-				hasBeenIdle = true
+				canDownScale = true
 			}
 		}
 	}
@@ -222,6 +226,7 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 	done := make(chan struct{})
 	w.incomingQueue <- func() {
 		task()
+		fmt.Println("completed a task!")
 		done <- struct{}{}
 		close(done)
 	}
