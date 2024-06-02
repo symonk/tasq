@@ -123,7 +123,7 @@ func (w *WorkerPool) start() {
 	var wg sync.WaitGroup
 
 	var currentWorkers int
-	exit := context.WithoutCancel(context.Background())
+	ctx := context.WithoutCancel(context.Background())
 
 core:
 	// The core worker pool loop
@@ -150,7 +150,7 @@ core:
 				}
 				if currentWorkers < w.workerCount {
 					wg.Add(1)
-					go w.worker(exit, &wg)
+					go w.worker(ctx, task, &wg)
 					currentWorkers++
 				} else {
 					w.workerQueue <- task
