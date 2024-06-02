@@ -1,6 +1,8 @@
 package workerpool
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -39,4 +41,12 @@ func TestTasksAreActuallyProcessed(t *testing.T) {
 	pool.Shutdown()
 	elapsedDuration := int(time.Since(start).Seconds())
 	assert.Less(t, elapsedDuration, 1)
+}
+
+func TestTaskCanBeEnqueueBlocked(t *testing.T) {
+	var wg sync.WaitGroup
+	wg.Add(1)
+	pool := New()
+	pool.EnqueueWait(context.Background(), func() { defer wg.Done() })
+	wg.Wait()
 }
