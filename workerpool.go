@@ -6,13 +6,6 @@ import (
 	"time"
 )
 
-const (
-	// When worker has processed no work for this duration, scale
-	// them down.
-	scaleDownTimeout = time.Second
-	_                = scaleDownTimeout
-)
-
 // Functional Options
 type Option func(*WorkerPool)
 
@@ -111,8 +104,18 @@ func (w *WorkerPool) Throttled() bool {
 // work from the client.  This is automatically invoked
 // during initialisation and is run in a goroutine.
 func (w *WorkerPool) start() {
+	defer close(w.finished)
+	idle := time.NewTimer(w.idleTimeout)
+	_ = idle
 	var wg sync.WaitGroup
 	wg.Add(w.workerCount)
+
+	var runningCount int
+
+core:
+	for {
+
+	}
 }
 
 // Shutdown prevents more work from being pushed on to the worker pool
