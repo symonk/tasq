@@ -264,7 +264,6 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 func (w *WorkerPool) worker(task Task) {
 	defer w.wg.Done()
 	for task != nil {
-		fmt.Println("Calling task...")
 		task()
 		task = <-w.workerQueue
 	}
