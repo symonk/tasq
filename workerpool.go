@@ -2,7 +2,6 @@ package workerpool
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -176,7 +175,7 @@ core:
 			// Continue for now; not sure how to actually scale down workers
 			// What if a worker actually has work in their queue?
 			if canDownScale && currentWorkers > 0 {
-				if w.shutdownWorker() {
+				if w.terminateWorker() {
 					currentWorkers--
 					idleChecker.Reset(w.scalingTimeout)
 					canDownScale = true
@@ -225,12 +224,6 @@ func (w *WorkerPool) Enqueue(task Task) {
 	}
 }
 
-// shutdownWorker attempts to scale down the worker pool by signalling
-// one of the currently spawned workers to shutdown.
-func (w *WorkerPool) shutdownWorker() bool {
-	return false
-}
-
 // EnqueueWait registers a task to the task queue but is blocking
 // until the task has been completed by a worker.  A context can be
 // provided to break out when required should the processing be
@@ -267,6 +260,12 @@ func (w *WorkerPool) worker(task Task) {
 		task()
 		task = <-w.workerQueue
 	}
+}
+
+// terminateWorker attempts to break a worker out of the
+// infinite for loop by sending them a nil task
+func (w *WorkerPool) terminateWorker() bool {
+	return false
 }
 
 // validateMaxWorkers ensures the worker pool is correctly configured
