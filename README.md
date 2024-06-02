@@ -38,8 +38,6 @@ func main() {
 		WithIdleTimeout(time.Second),
 		WithWaitingQueueBuffer(30),
 	)
-	// Defer the pool toshutdown, this is blocking until tasks have finished.
-	defer pool.Shutdown()
 
 	// Enqueue some tasks, a Task is a simple func()
 	for i := 0; i < 10; i++ {
@@ -48,6 +46,15 @@ func main() {
 			time.Sleep(time.Duration(i) * time.Microsecond)
 		})
 	}
+
+	// Wait until a task has been processed by the pool
+	pool.EnqueueWait(context.Background(), func() {
+		fmt.Println("I want to block until this has been processed by the pool")
+	}
+
+	// Block until the pool has cleared down queues and gracefully finalised
+	// could also defer pool.Shutdown() earlier.
+	pool.Shutdown()
 }
 
 ```
