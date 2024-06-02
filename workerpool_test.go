@@ -22,7 +22,3 @@ func TestNegativeMaxWorkers(t *testing.T) {
 func TestIdleWorkoutTieout(t *testing.T) {
 	assert.Equal(t, New(WithIdleTimeout(time.Second)).idleTimeout, time.Second)
 }
-
-func TestCiFail(t *testing.T) {
-	assert.False(t, true)
-}
