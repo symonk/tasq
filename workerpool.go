@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -120,43 +121,48 @@ func (w *WorkerPool) Throttled() bool {
 func (w *WorkerPool) start() {
 	defer close(w.finished)
 	idle := time.NewTimer(w.idleTimeout)
-	_ = idle
 	var wg sync.WaitGroup
-	wg.Add(w.workerCount)
+	defer wg.Wait()
 
 	var runningCount int
+	exit := context.WithoutCancel(context.Background())
 
-	// The core worker pool loop
 core:
+	// The core worker pool loop
 	for {
 		select {
-		case t, ok := <-w.taskQueue:
+		case task, ok := <-w.taskQueue:
 			if !ok {
-				// We are not running at capacity.
-				if runningCount < w.workerCount {
-
-				}
-				w.waitingQueue <- t
+				break core
 			}
-		case <-w.stopSignal:
-			break core
+			// We are not running at worker capacity; there is no
+			// need to store the tasks; spawn a new worker and directly
+			// have it process the task.
+			if runningCount < w.workerCount {
+				wg.Add(1)
+				go w.worker(exit, &wg)
+				runningCount++
+				w.waitingQueue <- task
+			} else {
+				// All workers are active, push the task onto a queue for the
+				// worker to process later.
+				w.waitingQueue <- task
+				atomic.StoreInt64(&w.waiting, w.Waiting())
+			}
+
+			// TODO: What to do if the taskQueue channel was closed?
+			// We still need to wait for work to be finished in the other queues
+		case <-idle.C:
+			fmt.Println("Worker is idle!")
 		}
 
 	}
-
 }
 
 // Shutdown prevents more work from being pushed on to the worker pool
 // and waits for all workers to clear down their work and the
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
-
-}
-
-// Abort cancels all pending running tasks immediately and is not a
-// graceful operation.  Task queue is not blocked while worker queues
-// are flushed down.
-func (w *WorkerPool) Abort() {
 
 }
 
