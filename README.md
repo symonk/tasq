@@ -50,7 +50,7 @@ func main() {
 	// Wait until a task has been processed by the pool
 	pool.EnqueueWait(context.Background(), func() {
 		fmt.Println("I want to block until this has been processed by the pool")
-	}
+	})
 
 	// Block until the pool has cleared down queues and gracefully finalised
 	// could also defer pool.Shutdown() earlier.
