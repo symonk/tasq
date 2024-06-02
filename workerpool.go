@@ -133,7 +133,8 @@ func (w *WorkerPool) start() {
 	idleChecker := time.NewTimer(w.idleTimeout)
 
 	var currentWorkers int
-	ctx := context.WithoutCancel(context.Background())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 core:
 	// The core worker pool loop
@@ -153,9 +154,8 @@ core:
 				go w.worker(ctx, task)
 				currentWorkers++
 			} else {
-				// We are not running at worker capacity; there is no
-				// need to store the tasks; spawn a new worker and directly
-				// have it process the task.
+				// Workers are at spawned capacity, throw it onto the worker queue
+				// for a worker to process in future.
 				w.workerQueue <- task
 				atomic.StoreInt32(&w.totalQueued, int32(len(w.workerQueue)))
 
