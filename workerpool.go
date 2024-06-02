@@ -32,12 +32,13 @@ type Scheduler interface {
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
 type WorkerPool struct {
-	workerCount  int
-	taskQueue    chan Task
-	workerQueue  chan Task
-	stopped      bool
-	stoppedMutex sync.Mutex
-	finished     chan struct{}
+	workerCount int
+	taskQueue   chan Task
+	workerQueue chan Task
+	stopped     bool
+	throttled   bool
+	wpMutex     sync.Mutex
+	finished    chan struct{}
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -67,21 +68,25 @@ func (w *WorkerPool) Length() int {
 // Stopped returns if the workerpool is in a stopped
 // state
 func (w *WorkerPool) Stopped() bool {
-	w.stoppedMutex.Lock()
-	defer w.stoppedMutex.Unlock()
+	w.wpMutex.Lock()
+	defer w.wpMutex.Unlock()
 	return w.stopped
 }
 
 // Throttled returns if the workerpool is in a throttled
 // state
 func (w *WorkerPool) Throttled() bool {
-	return false
+	w.wpMutex.Lock()
+	defer w.wpMutex.Unlock()
+	return w.throttled
 }
 
 // Start initialises the worker pool ready to accept
 // work from the client.  This is automatically invoked
 // during initialisation and is run in a goroutine.
 func (w *WorkerPool) start() {
+	var wg sync.WaitGroup
+	wg.Add(w.workerCount)
 
 }
 
@@ -119,4 +124,15 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 // through to the workers and finalised.
 func (w *WorkerPool) flushTaskQueue() {
 
+}
+
+// worker is responsible for retrieve worker tasks off the
+// queue and executing them.  Worker blocks if there are not
+// tasks for it to process.
+func (w *WorkerPool) worker(task Task, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for task != nil {
+		task()
+		task = <-w.workerQueue
+	}
 }
