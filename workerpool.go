@@ -82,6 +82,7 @@ func New(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
 		workerCount: 1,
 		taskQueue:   make(chan Task),
+		// TODO: This is plain wrong, should the option just provide the channel? feels yucky if so!
 		workerQueue: make(chan Task, 1),
 		stopSignal:  make(chan struct{}),
 		finished:    make(chan struct{}),
