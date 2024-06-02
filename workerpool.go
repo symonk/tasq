@@ -141,8 +141,6 @@ func (w *WorkerPool) start() {
 	idleChecker := time.NewTimer(w.scalingTimeout)
 
 	var currentWorkers int
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 core:
 	// The core worker pool loop
@@ -162,7 +160,7 @@ core:
 					// task to handle directly, it will continue polling for future work from the
 					// worker queue.
 					w.wg.Add(1)
-					go w.worker(ctx, task)
+					go w.worker(task)
 					currentWorkers++
 				} else {
 					// We have the full capacity of workers and the worker queue is blocking.  Store
@@ -177,11 +175,12 @@ core:
 		case <-idleChecker.C:
 			// Continue for now; not sure how to actually scale down workers
 			// What if a worker actually has work in their queue?
-			continue
 			if canDownScale && currentWorkers > 0 {
-				currentWorkers--
-				idleChecker.Reset(w.scalingTimeout)
-				canDownScale = true
+				if w.shutdownWorker() {
+					currentWorkers--
+					idleChecker.Reset(w.scalingTimeout)
+					canDownScale = true
+				}
 			}
 		}
 	}
@@ -193,7 +192,7 @@ core:
 // and waits for all workers to clear down their work and the
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
-	close(w.incomingQueue)
+	w.flushDownQueues()
 	w.wg.Wait()
 }
 
@@ -202,7 +201,19 @@ func (w *WorkerPool) Shutdown() {
 // This does not prevent more tasks being enqueued onto the task
 // queue, it simply puts all workers into an idle state after
 // they have completed their pending task
+// TODO: We need a way to have the worker stall tasks - this
+// is useful if there was an outage such as DB detected, the worker pool
+// would wait for a fixed period of time before it began calling task functions
 func (w *WorkerPool) Stall(ctx context.Context) {
+}
+
+// flushDownQueues causes the queues to flush without allowing any new
+// work to enter the pool, preparing for a graceful exit.
+func (w *WorkerPool) flushDownQueues() {
+	for i := 0; i < w.maximumWorkers; i++ {
+		w.incomingQueue <- nil
+	}
+
 }
 
 // Enqueue registers a task to the task queue ready to be picked
@@ -212,6 +223,12 @@ func (w *WorkerPool) Enqueue(task Task) {
 	if task != nil {
 		w.incomingQueue <- task
 	}
+}
+
+// shutdownWorker attempts to scale down the worker pool by signalling
+// one of the currently spawned workers to shutdown.
+func (w *WorkerPool) shutdownWorker() bool {
+	return false
 }
 
 // EnqueueWait registers a task to the task queue but is blocking
@@ -226,7 +243,6 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 	done := make(chan struct{})
 	w.incomingQueue <- func() {
 		task()
-		fmt.Println("completed a task!")
 		done <- struct{}{}
 		close(done)
 	}
@@ -242,27 +258,15 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 	}
 }
 
-// FlushedQueuedTasks ensures the task queue is completely flushed
-// through to the workers and finalised.
-func (w *WorkerPool) flushTaskQueue() {
-
-}
-
 // worker continiously pulls work off the worker queue after it has received
 // its first task directly from the core start loop.  It will sit idling on
 // the workerQueue for future work.
-func (w *WorkerPool) worker(ctx context.Context, task Task) {
+func (w *WorkerPool) worker(task Task) {
 	defer w.wg.Done()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			for task != nil {
-				task()
-				task = <-w.workerQueue
-			}
-		}
+	for task != nil {
+		fmt.Println("Calling task...")
+		task()
+		task = <-w.workerQueue
 	}
 }
 

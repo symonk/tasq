@@ -29,7 +29,6 @@ func TestWaitingQueueSize(t *testing.T) {
 }
 
 func TestTasksAreActuallyProcessed(t *testing.T) {
-	t.Skip()
 	pool := New(WithMaxWorkers(10), WithIdleTimeout(3*time.Second))
 	start := time.Now()
 	for i := 0; i < 10; i++ {
@@ -38,6 +37,6 @@ func TestTasksAreActuallyProcessed(t *testing.T) {
 		})
 	}
 	pool.Shutdown()
-	dur := time.Since(start)
-	assert.Less(t, dur, 5)
+	elapsedDuration := int(time.Since(start).Seconds())
+	assert.Less(t, elapsedDuration, 1)
 }
