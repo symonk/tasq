@@ -21,7 +21,9 @@ func main() {
 
     // Send tasks to the pool
     for i := 0; i < 10; i++ { 
-        pool.Enqueue(func() fmt.Println(i))
+        pool.Enqueue(func() {
+            fmt.Println(i)
+        })
     }
 }
 
