@@ -13,6 +13,27 @@ const (
 	_                = scaleDownTimeout
 )
 
+// Functional Options
+type Option func(*WorkerPool)
+
+// WithMaxWorkers is a functional option to control the maximum
+// number of workers in the pool.
+func WithMaxWorkers(workers int) Option {
+	return func(w *WorkerPool) {
+		workers = validateMaxWorkers(workers)
+		w.workerCount = workers
+	}
+}
+
+// WithIdleTimeout is a functional option to control the maximum
+// time a worker can be idle without performing a task before
+// they are shutdown.
+func WithIdleTimeout(timeout time.Duration) Option {
+	return func(w *WorkerPool) {
+		w.idleTimeout = timeout
+	}
+}
+
 // Task is an encapsulation of a callable piece of work
 type Task func()
 
@@ -20,7 +41,7 @@ type Task func()
 // take and process tasks in a distributed manner.
 type Scheduler interface {
 	start()
-	Stop()
+	Shutdown()
 	Stopped() bool
 	Throttle(ctx context.Context)
 	Throttled() bool
@@ -33,6 +54,7 @@ type Scheduler interface {
 // a task queue and various workers up to the worker count.
 type WorkerPool struct {
 	workerCount int
+	idleTimeout time.Duration
 	taskQueue   chan Task
 	workerQueue chan Task
 	stopped     bool
@@ -47,12 +69,15 @@ var _ Scheduler = (*WorkerPool)(nil)
 
 // New returns a new instance (ptr) of a worker pool and
 // schedules it to start accepting tasks in parallel.
-func New(maxWorkers int) *WorkerPool {
+func New(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
-		workerCount: maxWorkers,
+		workerCount: 1,
 		taskQueue:   make(chan Task),
 		workerQueue: make(chan Task),
 		finished:    make(chan struct{}),
+	}
+	for _, opt := range opts {
+		opt(wp)
 	}
 	go wp.start()
 
@@ -87,13 +112,19 @@ func (w *WorkerPool) Throttled() bool {
 func (w *WorkerPool) start() {
 	var wg sync.WaitGroup
 	wg.Add(w.workerCount)
+}
+
+// Shutdown prevents more work from being pushed on to the worker pool
+// and waits for all workers to clear down their work and the
+// remaining task queue before gracefully exiting.
+func (w *WorkerPool) Shutdown() {
 
 }
 
-// Stop prevents more work from being pushed on to the worker pool
-// and waits for all workers to clear down their work and the
-// remaining task queue before gracefully exiting.
-func (w *WorkerPool) Stop() {
+// Abort cancels all pending running tasks immediately and is not a
+// graceful operation.  Task queue is not blocked while worker queues
+// are flushed down.
+func (w *WorkerPool) Abort() {
 
 }
 
@@ -108,7 +139,9 @@ func (w *WorkerPool) Throttle(ctx context.Context) {
 // Enqueue registers a task to the task queue ready to be picked
 // up when workers are available.
 func (w *WorkerPool) Enqueue(task Task) {
-
+	if task != nil {
+		w.taskQueue <- task
+	}
 }
 
 // EnqueueWait registers a task to the task queue but is blocking
@@ -129,10 +162,24 @@ func (w *WorkerPool) flushTaskQueue() {
 // worker is responsible for retrieve worker tasks off the
 // queue and executing them.  Worker blocks if there are not
 // tasks for it to process.
-func (w *WorkerPool) worker(task Task, wg *sync.WaitGroup) {
+func (w *WorkerPool) worker(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
-	for task != nil {
-		task()
-		task = <-w.workerQueue
+	for {
+		select {
+		case task := <-w.workerQueue:
+			task()
+		// TODO: This is no good; could leave worker queue tasks unprocessed?
+		case <-ctx.Done():
+			return
+		}
 	}
+}
+
+// validateMaxWorkers ensures the worker pool is correctly configured
+// with atleast a single worker.
+func validateMaxWorkers(workers int) int {
+	if workers < 1 {
+		return 1
+	}
+	return workers
 }
