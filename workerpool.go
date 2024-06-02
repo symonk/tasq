@@ -45,8 +45,8 @@ type Task func()
 type Scheduler interface {
 	Shutdown()
 	Stopped() bool
-	Throttle(ctx context.Context)
-	Throttled() bool
+	Stall(ctx context.Context)
+	Stalled() bool
 	Enqueue(task Task)
 	EnqueueWait(ctx context.Context, task Task)
 }
@@ -117,9 +117,9 @@ func (w *WorkerPool) Stopped() bool {
 	return w.stopped
 }
 
-// Throttled returns if the workerpool is in a throttled
+// Stalled returns if the workerpool is in a throttled
 // state
-func (w *WorkerPool) Throttled() bool {
+func (w *WorkerPool) Stalled() bool {
 	w.wpMutex.Lock()
 	defer w.wpMutex.Unlock()
 	return w.throttled
@@ -182,12 +182,12 @@ func (w *WorkerPool) Shutdown() {
 	w.wg.Wait()
 }
 
-// Throttle prevents workers from carrying out task execution.
+// Stall prevents workers from carrying out task execution.
 // Useful if you need your workloads to be delayed for a duration.
 // This does not prevent more tasks being enqueued onto the task
 // queue, it simply puts all workers into an idle state after
 // they have completed their pending task
-func (w *WorkerPool) Throttle(ctx context.Context) {
+func (w *WorkerPool) Stall(ctx context.Context) {
 }
 
 // Enqueue registers a task to the task queue ready to be picked
