@@ -137,7 +137,7 @@ func (w *WorkerPool) Stalled() bool {
 func (w *WorkerPool) start() {
 	defer close(w.completed)
 	var canDownScale bool
-	idleChecker := time.NewTimer(w.scalingTimeout)
+	idleTicker := time.NewTicker(w.scalingTimeout)
 
 	var currentWorkers int
 
@@ -171,13 +171,12 @@ core:
 			}
 			canDownScale = false
 
-		case <-idleChecker.C:
+		case <-idleTicker.C:
 			// Continue for now; not sure how to actually scale down workers
 			// What if a worker actually has work in their queue?
 			if canDownScale && currentWorkers > 0 {
 				if w.terminateWorker() {
 					currentWorkers--
-					idleChecker.Reset(w.scalingTimeout)
 					canDownScale = true
 				}
 			}
