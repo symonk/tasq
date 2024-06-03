@@ -234,7 +234,10 @@ func (w *WorkerPool) Shutdown() {
 	}
 }
 
-// Stall blocks workers from finishing tasks
+// Stall blocks until the context has been cancelled.
+// It will gradually block all workers in the pool
+// but they may process other tasks between the call to
+// Stall
 func (w *WorkerPool) Stall(ctx context.Context) {
 	w.stallMutex.Lock()
 	defer w.stallMutex.Unlock()

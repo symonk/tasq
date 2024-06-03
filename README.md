@@ -58,6 +58,16 @@ func main() {
 		fmt.Println("I want to block until this has been processed by the pool")
 	})
 
+	// If for whatever reason you need to throttle the workers because perhaps your
+	// database has gone offline etc.  This will cause a throttling task to be
+	// sent to workers until the context is cancelled and they will then continue
+	// processing tasks.  Note this is NOT immediate, there may be tasks in the 
+	// worker queue that will be seen before the throttling task.
+	// in future tasq will implement a seperate higher prio channel for throttling
+	// tasks only to overcome this.
+	ctx := context.WithTimeout(context.Background(), 1 * time.Minute)
+	pool.Stall(ctx)
+
 	// Block until the pool has cleared down queues and gracefully finalised
 	// could also defer pool.Shutdown() earlier.
 	pool.Shutdown()
