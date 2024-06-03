@@ -51,3 +51,19 @@ func TestTaskCanBeEnqueueBlocked(t *testing.T) {
 	pool.Shutdown()
 	wg.Wait()
 }
+
+func TestWorkerPoolCanBeStalled(t *testing.T) {
+	t.Skip()
+	pool := New(WithMaxWorkers(10))
+	start := time.Now()
+	dur := 5 * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), dur)
+	defer cancel()
+	for i := 0; i < 10; i++ {
+		pool.Enqueue(func() { time.Sleep(time.Millisecond) })
+	}
+	pool.Stall(ctx)
+	now := time.Since(start)
+	assert.Greater(t, now.Seconds(), 5*time.Second.Seconds())
+
+}

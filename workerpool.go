@@ -70,6 +70,7 @@ type WorkerPool struct {
 	stopSignal chan struct{}
 	stopped    bool
 	stalled    bool
+	stallMutex sync.Mutex
 	wpMutex    sync.Mutex
 	completed  chan struct{}
 	wg         sync.WaitGroup
@@ -226,22 +227,39 @@ func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
 // and waits for all workers to clear down their work and the
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
-	w.flushDownQueues()
-	w.wg.Wait()
+	if !w.stopped {
+		w.flushDownQueues()
+		w.wg.Wait()
+		w.stopped = true
+	}
 }
 
-// Stall prevents workers from carrying out task execution.
-// Useful if you need your workloads to be delayed for a duration.
-// This does not prevent more tasks being enqueued onto the task
-// queue, it simply puts all workers into an idle state after
-// they have completed their pending task
-// TODO: We need a way to have the worker stall tasks - this
-// is useful if there was an outage such as DB detected, the worker pool
-// would wait for a fixed period of time before it began calling task functions
+// Stall blocks workers from finishing tasks
 func (w *WorkerPool) Stall(ctx context.Context) {
-	w.wpMutex.Lock()
-	defer w.wpMutex.Unlock()
+	w.stallMutex.Lock()
+	defer w.stallMutex.Unlock()
+	defer func() { w.stalled = false }()
 	w.stalled = true
+
+	var idle sync.WaitGroup
+	idle.Add(w.maximumWorkers)
+
+	for i := 0; i < w.maximumWorkers; i++ {
+		w.waitingQueue <- func() {
+			defer idle.Done()
+			<-ctx.Done()
+		}
+
+	}
+
+	// Wait until all workers have finished waiting for the context.
+	// We should of pushed (and they received) a task that solely
+	// blocks until the context is cancelled.
+	// TODO: race condition if stall is called before all workers are
+	// spawned
+
+	idle.Wait()
+
 }
 
 // flushDownQueues causes the queues to flush without allowing any new
@@ -250,7 +268,6 @@ func (w *WorkerPool) flushDownQueues() {
 	for i := 0; i < w.maximumWorkers; i++ {
 		w.incomingQueue <- nil
 	}
-
 }
 
 // Enqueue registers a task to the task queue ready to be picked
