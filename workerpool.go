@@ -204,6 +204,9 @@ func (w *WorkerPool) Shutdown() {
 // is useful if there was an outage such as DB detected, the worker pool
 // would wait for a fixed period of time before it began calling task functions
 func (w *WorkerPool) Stall(ctx context.Context) {
+	w.wpMutex.Lock()
+	defer w.wpMutex.Unlock()
+	w.stalled = true
 }
 
 // flushDownQueues causes the queues to flush without allowing any new
