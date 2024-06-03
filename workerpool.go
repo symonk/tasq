@@ -146,11 +146,11 @@ func (w *WorkerPool) start() {
 core:
 	// The core worker pool loop
 	for {
-		// Try and flow work from eeither the incoming queue to the
+		// Try and flow work from either the incoming queue to the
 		// waiting queue, or take a task from the waiting queue to
 		// the worker queue.  If any of the other channels are closed
 		// this will return false and cause an exit.
-		if w.WaitQueueSize() > 0 {
+		if currentWorkers != 0 && w.WaitQueueSize() > 0 {
 			if !w.flushWaitingToWorkerQueue() {
 				break core
 			}
@@ -168,11 +168,10 @@ core:
 			// immediately; bypassing the interim waiting queue.
 			case w.workerQueue <- task:
 			default:
-				// Otherwise we are in the case that we need to start filling tasks into the
-				// (buffered) waiting queue for workers to pick off.
+				// check if we have spawned workers to capacity, if not simply launch a
+				// worker and give it a task.  This will start the worker loop for that
+				// goroutine.
 				if currentWorkers < w.maximumWorkers {
-					// we have less workers than the maximum; spawn another and supply it the
-					// current task directly.
 					w.wg.Add(1)
 					go w.worker(task)
 					currentWorkers++
