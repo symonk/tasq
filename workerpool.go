@@ -165,7 +165,7 @@ core:
 					// We have the full capacity of workers and the worker queue is blocking.  Store
 					// the task in the waiting queue to be picked up by a worker when available.
 					// atomically keep the queue size accurate.
-					w.workerQueue <- task
+					w.waitingQueue <- task
 					atomic.StoreInt32(&w.waitingQueueSize, w.WaitQueueSize())
 				}
 			}
