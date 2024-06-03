@@ -35,7 +35,7 @@ func TestTasksAreActuallyProcessed(t *testing.T) {
 	start := time.Now()
 	for i := 0; i < 10; i++ {
 		pool.Enqueue(func() {
-			time.Sleep(time.Microsecond)
+			time.Sleep(time.Millisecond)
 		})
 	}
 	pool.Shutdown()

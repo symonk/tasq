@@ -88,9 +88,11 @@ func New(opts ...Option) *WorkerPool {
 		incomingQueue:  make(chan Task),
 		// Can be configured with WithWaitingQueueSize option
 		waitingQueue: make(chan Task, 10),
-		workerQueue:  make(chan Task),
-		stopSignal:   make(chan struct{}),
-		completed:    make(chan struct{}),
+		// can be overwritten with the WithScalingTimeout option
+		scalingTimeout: 5 * time.Second,
+		workerQueue:    make(chan Task),
+		stopSignal:     make(chan struct{}),
+		completed:      make(chan struct{}),
 	}
 
 	for _, opt := range opts {
@@ -137,41 +139,54 @@ func (w *WorkerPool) Stalled() bool {
 func (w *WorkerPool) start() {
 	defer close(w.completed)
 	var canDownScale bool
-	idleTicker := time.NewTicker(w.scalingTimeout)
+	scaleCheckTicker := time.NewTicker(w.scalingTimeout)
 
 	var currentWorkers int
 
 core:
 	// The core worker pool loop
 	for {
+		// Try and flow work from eeither the incoming queue to the
+		// waiting queue, or take a task from the waiting queue to
+		// the worker queue.  If any of the other channels are closed
+		// this will return false and cause an exit.
+		if w.WaitQueueSize() > 0 {
+			if !w.flushWaitingToWorkerQueue() {
+				break core
+			}
+			continue
+		}
+
 		select {
 		case task, ok := <-w.incomingQueue:
 			if !ok {
-				// The worker incomingQueue has been closed.
+				// The worker pool incomingQueue has been closed.
 				break core
 			}
 			select {
-			// Attempt to store the task directly into the worker queue
+			// If the (unbuffered) worker queue will accept the task, store it
+			// immediately; bypassing the interim waiting queue.
 			case w.workerQueue <- task:
 			default:
+				// Otherwise we are in the case that we need to start filling tasks into the
+				// (buffered) waiting queue for workers to pick off.
 				if currentWorkers < w.maximumWorkers {
-					// The worker queue was blocking (full), launch another worker and pass it the
-					// task to handle directly, it will continue polling for future work from the
-					// worker queue.
+					// we have less workers than the maximum; spawn another and supply it the
+					// current task directly.
 					w.wg.Add(1)
 					go w.worker(task)
 					currentWorkers++
 				} else {
-					// We have the full capacity of workers and the worker queue is blocking.  Store
-					// the task in the waiting queue to be picked up by a worker when available.
-					// atomically keep the queue size accurate.
+					// The pool is working at capacity and the worker queue would be blocking on the send
+					// Store the task in the waitingQueue to be picked up when workers become available.
+					// atomically update the size of the wait queue.
 					w.waitingQueue <- task
-					atomic.StoreInt32(&w.waitingQueueSize, w.WaitQueueSize())
+					atomic.StoreInt32(&w.waitingQueueSize, int32(len(w.waitingQueue)))
 				}
 			}
 			canDownScale = false
 
-		case <-idleTicker.C:
+		case <-scaleCheckTicker.C:
 			// Continue for now; not sure how to actually scale down workers
 			// What if a worker actually has work in their queue?
 			if canDownScale && currentWorkers > 0 {
@@ -184,6 +199,28 @@ core:
 	}
 	// Wait for all workers to clear down their queues.
 	w.wg.Wait()
+}
+
+// flushWaitingToWorkerQueue can either take a task
+// off the incomingQueue and store it in the waitingQueue
+// or take a task off the waitingQueue and move it to the
+// workerQueue.  If any of the incoming or waiting channels
+// have been closed it returns false causing a start() exit.
+func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
+	select {
+	case incomingTask, ok := <-w.incomingQueue:
+		if !ok {
+			return false
+		}
+		w.waitingQueue <- incomingTask
+	case waitingTask, ok := <-w.waitingQueue:
+		if !ok {
+			return false
+		}
+		w.workerQueue <- waitingTask
+	}
+	atomic.StoreInt32(&w.waitingQueueSize, int32(w.waitingQueueSize))
+	return true
 }
 
 // Shutdown prevents more work from being pushed on to the worker pool
