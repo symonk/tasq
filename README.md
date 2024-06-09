@@ -77,7 +77,7 @@ func main() {
 
 -----
 
-The worker pool by assumes the following configurations by default, all of which are overwritable
+The worker pool by default assumes the following configurations by default, all of which are overwritable
 using functional options:
 
  - `1024` interim queue buffer size (The queue between task submission and worker queues).
