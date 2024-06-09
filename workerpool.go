@@ -249,7 +249,7 @@ func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
 	if !w.stopped {
-		w.flushDownQueues()
+		w.signalWorkerShutdown()
 		w.stopped = true
 	}
 }
@@ -285,9 +285,9 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 
 }
 
-// flushDownQueues causes the queues to flush without allowing any new
+// signalWorkerShutdown causes the queues to flush without allowing any new
 // work to enter the pool, preparing for a graceful exit.
-func (w *WorkerPool) flushDownQueues() {
+func (w *WorkerPool) signalWorkerShutdown() {
 	for i := 0; i < w.maximumWorkers; i++ {
 		w.newTasksQueue <- nil
 	}
