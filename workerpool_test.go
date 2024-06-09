@@ -34,7 +34,7 @@ func TestTasksAreActuallyProcessed(t *testing.T) {
 	pool := NewWorkerPool(WithMaxWorkers(10), WithIdleTimeout(3*time.Second))
 	start := time.Now()
 	for i := 0; i < 10; i++ {
-		pool.Enqueue(func() {
+		_ = pool.Enqueue(func() {
 			time.Sleep(time.Microsecond)
 		})
 	}
@@ -47,7 +47,7 @@ func TestTaskCanBeEnqueueBlocked(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
 	pool := NewWorkerPool()
-	pool.EnqueueWait(context.Background(), func() { defer wg.Done() })
+	_ = pool.EnqueueWait(context.Background(), func() { defer wg.Done() })
 	pool.Shutdown()
 	wg.Wait()
 }
@@ -60,7 +60,7 @@ func TestWorkerPoolCanBeStalled(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), dur)
 	defer cancel()
 	for i := 0; i < 10; i++ {
-		pool.Enqueue(func() { time.Sleep(time.Millisecond) })
+		_ = pool.Enqueue(func() { time.Sleep(time.Millisecond) })
 	}
 	pool.Stall(ctx)
 	now := time.Since(start)

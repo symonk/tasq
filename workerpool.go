@@ -76,6 +76,7 @@ var ErrSubmittedNilTask = errors.New("cannot submit a nil task to the pool")
 // new options to configure buffers (if desired) in future.
 type WorkerPool struct {
 	maximumWorkers int
+	currWorkers    int
 	scalingTimeout time.Duration
 	// The initial Queue for tasks enqueued (unbuffered)
 	newTasksQueue chan TaskFunc
@@ -194,12 +195,13 @@ core:
 					w.wg.Add(1)
 					go w.worker(task)
 					currentWorkers++
+					w.currWorkers++
 				} else {
 					// The pool is working at capacity and the worker queue would be blocking on the send
 					// Store the task in the waitingQueue to be picked up when workers become available.
 					// atomically update the size of the wait queue.
 					w.holdingQueue <- task
-					atomic.StoreInt32(&w.waitingQueueSize, int32(len(w.holdingQueue)))
+					w.waitingQueueSize = int32(len(w.holdingQueue))
 				}
 			}
 			isIdle = false
@@ -210,6 +212,7 @@ core:
 			if isIdle && currentWorkers > 0 {
 				if w.terminateWorker() {
 					currentWorkers--
+					w.currWorkers--
 					isIdle = true
 				}
 			}
