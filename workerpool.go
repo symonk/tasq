@@ -44,9 +44,9 @@ func WithIdleTimeout(timeout time.Duration) Option {
 	}
 }
 
-// WithWaitingQueueBuffer is a functional option to control the
+// WithBufferSize is a functional option to control the
 // buffer size for the worker queue.
-func WithWaitingQueueBuffer(size int) Option {
+func WithBufferSize(size int) Option {
 	return func(w *WorkerPool) {
 		w.holdingQueue = make(chan TaskFunc, size)
 	}
@@ -66,7 +66,7 @@ type Scheduler interface {
 	EnqueueWait(ctx context.Context, task TaskFunc) error
 }
 
-var ErrSubmittedNilTask = errors.New("cannot submit a nil tasks to the pool")
+var ErrSubmittedNilTask = errors.New("cannot submit a nil task to the pool")
 
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
