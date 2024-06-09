@@ -10,27 +10,33 @@ import (
 )
 
 func TestSize(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, NewWorkerPool(WithMaxWorkers(100)).Length(), 100)
 }
 
 func TestValidateMaxWorkers(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, NewWorkerPool(WithMaxWorkers(0)).Length(), 1)
 }
 
 func TestNegativeMaxWorkers(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, NewWorkerPool(WithMaxWorkers(-100)).Length(), 1)
 }
 
 func TestIdleWorkoutTieout(t *testing.T) {
+	t.Parallel()
 	assert.Equal(t, NewWorkerPool(WithIdleTimeout(time.Second)).scalingTimeout, time.Second)
 }
 
 func TestWaitingQueueSize(t *testing.T) {
+	t.Parallel()
 	pool := NewWorkerPool()
 	assert.Zero(t, pool.WaitQueueSize())
 }
 
 func TestTasksAreActuallyProcessed(t *testing.T) {
+	t.Parallel()
 	pool := NewWorkerPool(WithMaxWorkers(10), WithIdleTimeout(3*time.Second))
 	start := time.Now()
 	for i := 0; i < 10; i++ {
@@ -44,6 +50,7 @@ func TestTasksAreActuallyProcessed(t *testing.T) {
 }
 
 func TestTaskCanBeEnqueueBlocked(t *testing.T) {
+	t.Parallel()
 	var wg sync.WaitGroup
 	wg.Add(1)
 	pool := NewWorkerPool()
@@ -53,6 +60,7 @@ func TestTaskCanBeEnqueueBlocked(t *testing.T) {
 }
 
 func TestWorkerPoolCanBeStalled(t *testing.T) {
+	t.Parallel()
 	t.Skip()
 	pool := NewWorkerPool(WithMaxWorkers(10))
 	start := time.Now()
@@ -69,6 +77,7 @@ func TestWorkerPoolCanBeStalled(t *testing.T) {
 }
 
 func TestErrorOnNilTaskEnqueue(t *testing.T) {
+	t.Parallel()
 	pool := NewWorkerPool()
 	var task TaskFunc
 	err := pool.Enqueue(task)
@@ -77,6 +86,7 @@ func TestErrorOnNilTaskEnqueue(t *testing.T) {
 }
 
 func TestErrorOnNilTaskEnqueueWait(t *testing.T) {
+	t.Parallel()
 	pool := NewWorkerPool()
 	var task TaskFunc
 	err := pool.EnqueueWait(context.Background(), task)
