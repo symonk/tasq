@@ -106,7 +106,7 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 		maximumWorkers: 1,
 		newTasksQueue:  make(chan TaskFunc),
 		// Can be configured with WithWaitingQueueSize option
-		holdingQueue: make(chan TaskFunc, 10),
+		holdingQueue: make(chan TaskFunc, 1024),
 		// can be overwritten with the WithScalingTimeout option
 		scalingTimeout: 5 * time.Second,
 		workerQueue:    make(chan TaskFunc),
@@ -114,10 +114,11 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 		completed:      make(chan struct{}),
 	}
 
+	// Apply functional options after defaults have been configured
 	for _, opt := range opts {
 		opt(wp)
 	}
-	go wp.start()
+	go wp.dispatch()
 
 	return wp
 }
@@ -152,12 +153,12 @@ func (w *WorkerPool) Stalled() bool {
 	return w.stalled
 }
 
-// Start initialises the worker pool ready to accept
+// dispatch initialises the worker pool ready to accept
 // work from the client.  This is automatically invoked
-// during initialisation and is run in a goroutine.
-func (w *WorkerPool) start() {
+// during initialisation and is run in a asynchronously.
+func (w *WorkerPool) dispatch() {
 	defer close(w.completed)
-	var canDownScale bool
+	var isIdle bool
 	scaleCheckTicker := time.NewTicker(w.scalingTimeout)
 
 	var currentWorkers int
@@ -179,7 +180,6 @@ core:
 		select {
 		case task, ok := <-w.newTasksQueue:
 			if !ok {
-				// The worker pool incomingQueue has been closed.
 				break core
 			}
 			select {
@@ -202,15 +202,15 @@ core:
 					atomic.StoreInt32(&w.waitingQueueSize, int32(len(w.holdingQueue)))
 				}
 			}
-			canDownScale = false
+			isIdle = false
 
 		case <-scaleCheckTicker.C:
 			// Continue for now; not sure how to actually scale down workers
 			// What if a worker actually has work in their queue?
-			if canDownScale && currentWorkers > 0 {
+			if isIdle && currentWorkers > 0 {
 				if w.terminateWorker() {
 					currentWorkers--
-					canDownScale = true
+					isIdle = true
 				}
 			}
 		}
