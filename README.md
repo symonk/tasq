@@ -77,3 +77,14 @@ func main() {
 
 -----
 
+The worker pool by assumes the following configurations by default, all of which are overwritable
+using functional options:
+
+ - `1024` interim queue buffer size (The queue between task submission and worker queues).
+ - `5` maximum workers.
+ - `5 seconds` idle scaling timeout (The time where workers are scaled down without work).
+
+The workerpool implements the exported `Scheduler` interface.
+
+----- 
+

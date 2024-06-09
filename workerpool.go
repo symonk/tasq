@@ -103,7 +103,7 @@ var _ Scheduler = (*WorkerPool)(nil)
 func NewWorkerPool(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
 		// Can be configured with WithMaxWorkerCount option
-		maximumWorkers: 1,
+		maximumWorkers: 5,
 		newTasksQueue:  make(chan TaskFunc),
 		// Can be configured with WithWaitingQueueSize option
 		holdingQueue: make(chan TaskFunc, 1024),
