@@ -47,7 +47,7 @@ func WithIdleTimeout(timeout time.Duration) Option {
 // buffer size for the worker queue.
 func WithWaitingQueueBuffer(size int) Option {
 	return func(w *WorkerPool) {
-		w.waitingQueue = make(chan TaskFunc, size)
+		w.holdingQueue = make(chan TaskFunc, size)
 	}
 }
 
@@ -75,9 +75,9 @@ type WorkerPool struct {
 	maximumWorkers int
 	scalingTimeout time.Duration
 	// The initial Queue for tasks enqueued (unbuffered)
-	incomingQueue chan TaskFunc
+	newTasksQueue chan TaskFunc
 	// The interim holding pen before workers can process them
-	waitingQueue     chan TaskFunc
+	holdingQueue     chan TaskFunc
 	waitingQueueSize int32
 	// Tasks for workers that have been moved from the interim queue
 	workerQueue chan TaskFunc
@@ -101,9 +101,9 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
 		// Can be configured with WithMaxWorkerCount option
 		maximumWorkers: 1,
-		incomingQueue:  make(chan TaskFunc),
+		newTasksQueue:  make(chan TaskFunc),
 		// Can be configured with WithWaitingQueueSize option
-		waitingQueue: make(chan TaskFunc, 10),
+		holdingQueue: make(chan TaskFunc, 10),
 		// can be overwritten with the WithScalingTimeout option
 		scalingTimeout: 5 * time.Second,
 		workerQueue:    make(chan TaskFunc),
@@ -174,7 +174,7 @@ core:
 		}
 
 		select {
-		case task, ok := <-w.incomingQueue:
+		case task, ok := <-w.newTasksQueue:
 			if !ok {
 				// The worker pool incomingQueue has been closed.
 				break core
@@ -195,8 +195,8 @@ core:
 					// The pool is working at capacity and the worker queue would be blocking on the send
 					// Store the task in the waitingQueue to be picked up when workers become available.
 					// atomically update the size of the wait queue.
-					w.waitingQueue <- task
-					atomic.StoreInt32(&w.waitingQueueSize, int32(len(w.waitingQueue)))
+					w.holdingQueue <- task
+					atomic.StoreInt32(&w.waitingQueueSize, int32(len(w.holdingQueue)))
 				}
 			}
 			canDownScale = false
@@ -223,12 +223,12 @@ core:
 // have been closed it returns false causing a start() exit.
 func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
 	select {
-	case incomingTask, ok := <-w.incomingQueue:
+	case incomingTask, ok := <-w.newTasksQueue:
 		if !ok {
 			return false
 		}
-		w.waitingQueue <- incomingTask
-	case waitingTask, ok := <-w.waitingQueue:
+		w.holdingQueue <- incomingTask
+	case waitingTask, ok := <-w.holdingQueue:
 		if !ok {
 			return false
 		}
@@ -263,7 +263,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	idle.Add(w.maximumWorkers)
 
 	for i := 0; i < w.maximumWorkers; i++ {
-		w.waitingQueue <- func() {
+		w.holdingQueue <- func() {
 			defer idle.Done()
 			<-ctx.Done()
 		}
@@ -284,7 +284,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 // work to enter the pool, preparing for a graceful exit.
 func (w *WorkerPool) flushDownQueues() {
 	for i := 0; i < w.maximumWorkers; i++ {
-		w.incomingQueue <- nil
+		w.newTasksQueue <- nil
 	}
 }
 
@@ -293,7 +293,7 @@ func (w *WorkerPool) flushDownQueues() {
 // find their way into the queues.
 func (w *WorkerPool) Enqueue(task TaskFunc) {
 	if task != nil {
-		w.incomingQueue <- task
+		w.newTasksQueue <- task
 	}
 }
 
@@ -307,7 +307,7 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) {
 		return
 	}
 	done := make(chan struct{})
-	w.incomingQueue <- func() {
+	w.newTasksQueue <- func() {
 		task()
 		done <- struct{}{}
 		close(done)
