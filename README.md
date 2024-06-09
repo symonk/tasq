@@ -47,14 +47,14 @@ func main() {
 	// This is non blocking and the tasks will eventually be 
 	// processed, if you need to wait for a task, see `EnqueueWait` below.
 	for i := 0; i < 10; i++ {
-		pool.Enqueue(func() {
+		err := pool.Enqueue(func() {
 			i := i
 			time.Sleep(time.Duration(i) * time.Microsecond)
 		})
 	}
 
 	// Wait until a task has been processed by the pool
-	pool.EnqueueWait(context.Background(), func() {
+	err := pool.EnqueueWait(context.Background(), func() {
 		fmt.Println("I want to block until this has been processed by the pool")
 	})
 

@@ -73,12 +73,13 @@ func TestErrorOnNilTaskEnqueue(t *testing.T) {
 	var task TaskFunc
 	err := pool.Enqueue(task)
 	assert.ErrorIs(t, err, ErrSubmittedNilTask)
-	assert.ErrorIsf(t, err, ErrSubmittedNilTask, "cannot submit a nil tasks to the workerpool")
+	assert.ErrorContains(t, err, "cannot submit a nil task to the pool")
 }
 
 func TestErrorOnNilTaskEnqueueWait(t *testing.T) {
 	pool := NewWorkerPool()
 	var task TaskFunc
 	err := pool.EnqueueWait(context.Background(), task)
-	assert.ErrorIsf(t, err, ErrSubmittedNilTask, "cannot submit a nil tasks to the workerpool")
+	assert.ErrorIs(t, err, ErrSubmittedNilTask, "cannot submit a nil task to the workerpool")
+	assert.ErrorContains(t, err, "cannot submit a nil task to the pool")
 }
