@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+// Worker encapsulates an individual worker
+type Worker struct {
+	work chan TaskFunc
+}
+
+// NewWorker instantiates an new worker object.
+func NewWorker(queue chan TaskFunc) *Worker {
+	return &Worker{work: queue}
+}
+
+// Stall blocks
+func Stall(ctx context.Context) {
+
+}
+
 // Functional Options
 type Option func(*WorkerPool)
 
@@ -32,12 +47,12 @@ func WithIdleTimeout(timeout time.Duration) Option {
 // buffer size for the worker queue.
 func WithWaitingQueueBuffer(size int) Option {
 	return func(w *WorkerPool) {
-		w.waitingQueue = make(chan Task, size)
+		w.waitingQueue = make(chan TaskFunc, size)
 	}
 }
 
-// Task is an encapsulation of a callable piece of work
-type Task func()
+// TaskFunc is an encapsulation of a callable piece of work
+type TaskFunc func()
 
 // Scheduler is the core interface for something which can
 // take and process tasks in a distributed manner.
@@ -46,8 +61,8 @@ type Scheduler interface {
 	Stopped() bool
 	Stall(ctx context.Context)
 	Stalled() bool
-	Enqueue(task Task)
-	EnqueueWait(ctx context.Context, task Task)
+	Enqueue(task TaskFunc)
+	EnqueueWait(ctx context.Context, task TaskFunc)
 }
 
 // WorkerPool is the core scheduler.  It internally manages
@@ -60,12 +75,12 @@ type WorkerPool struct {
 	maximumWorkers int
 	scalingTimeout time.Duration
 	// The initial Queue for tasks enqueued (unbuffered)
-	incomingQueue chan Task
+	incomingQueue chan TaskFunc
 	// The interim holding pen before workers can process them
-	waitingQueue     chan Task
+	waitingQueue     chan TaskFunc
 	waitingQueueSize int32
 	// Tasks for workers that have been moved from the interim queue
-	workerQueue chan Task
+	workerQueue chan TaskFunc
 
 	stopSignal chan struct{}
 	stopped    bool
@@ -80,18 +95,18 @@ type WorkerPool struct {
 // at compile time.
 var _ Scheduler = (*WorkerPool)(nil)
 
-// New returns a new instance (ptr) of a worker pool and
+// NewWorkerPool returns a new instance (ptr) of a worker pool and
 // schedules it to start accepting tasks in parallel.
-func New(opts ...Option) *WorkerPool {
+func NewWorkerPool(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
 		// Can be configured with WithMaxWorkerCount option
 		maximumWorkers: 1,
-		incomingQueue:  make(chan Task),
+		incomingQueue:  make(chan TaskFunc),
 		// Can be configured with WithWaitingQueueSize option
-		waitingQueue: make(chan Task, 10),
+		waitingQueue: make(chan TaskFunc, 10),
 		// can be overwritten with the WithScalingTimeout option
 		scalingTimeout: 5 * time.Second,
-		workerQueue:    make(chan Task),
+		workerQueue:    make(chan TaskFunc),
 		stopSignal:     make(chan struct{}),
 		completed:      make(chan struct{}),
 	}
@@ -276,7 +291,7 @@ func (w *WorkerPool) flushDownQueues() {
 // Enqueue registers a task to the task queue ready to be picked
 // up when workers are available.  Ensures that nil values cannot
 // find their way into the queues.
-func (w *WorkerPool) Enqueue(task Task) {
+func (w *WorkerPool) Enqueue(task TaskFunc) {
 	if task != nil {
 		w.incomingQueue <- task
 	}
@@ -287,7 +302,7 @@ func (w *WorkerPool) Enqueue(task Task) {
 // provided to break out when required should the processing be
 // taking longer than expected.  Ensures nil values cannot make their
 // way onto the queues.
-func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
+func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) {
 	if task == nil {
 		return
 	}
@@ -312,7 +327,7 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task Task) {
 // worker continiously pulls work off the worker queue after it has received
 // its first task directly from the core start loop.  It will sit idling on
 // the workerQueue for future work.
-func (w *WorkerPool) worker(task Task) {
+func (w *WorkerPool) worker(task TaskFunc) {
 	defer w.wg.Done()
 	for task != nil {
 		task()

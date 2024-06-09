@@ -10,28 +10,28 @@ import (
 )
 
 func TestSize(t *testing.T) {
-	assert.Equal(t, New(WithMaxWorkers(100)).Length(), 100)
+	assert.Equal(t, NewWorkerPool(WithMaxWorkers(100)).Length(), 100)
 }
 
 func TestValidateMaxWorkers(t *testing.T) {
-	assert.Equal(t, New(WithMaxWorkers(0)).Length(), 1)
+	assert.Equal(t, NewWorkerPool(WithMaxWorkers(0)).Length(), 1)
 }
 
 func TestNegativeMaxWorkers(t *testing.T) {
-	assert.Equal(t, New(WithMaxWorkers(-100)).Length(), 1)
+	assert.Equal(t, NewWorkerPool(WithMaxWorkers(-100)).Length(), 1)
 }
 
 func TestIdleWorkoutTieout(t *testing.T) {
-	assert.Equal(t, New(WithIdleTimeout(time.Second)).scalingTimeout, time.Second)
+	assert.Equal(t, NewWorkerPool(WithIdleTimeout(time.Second)).scalingTimeout, time.Second)
 }
 
 func TestWaitingQueueSize(t *testing.T) {
-	pool := New()
+	pool := NewWorkerPool()
 	assert.Zero(t, pool.WaitQueueSize())
 }
 
 func TestTasksAreActuallyProcessed(t *testing.T) {
-	pool := New(WithMaxWorkers(10), WithIdleTimeout(3*time.Second))
+	pool := NewWorkerPool(WithMaxWorkers(10), WithIdleTimeout(3*time.Second))
 	start := time.Now()
 	for i := 0; i < 10; i++ {
 		pool.Enqueue(func() {
@@ -46,7 +46,7 @@ func TestTasksAreActuallyProcessed(t *testing.T) {
 func TestTaskCanBeEnqueueBlocked(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(1)
-	pool := New()
+	pool := NewWorkerPool()
 	pool.EnqueueWait(context.Background(), func() { defer wg.Done() })
 	pool.Shutdown()
 	wg.Wait()
@@ -54,7 +54,7 @@ func TestTaskCanBeEnqueueBlocked(t *testing.T) {
 
 func TestWorkerPoolCanBeStalled(t *testing.T) {
 	t.Skip()
-	pool := New(WithMaxWorkers(10))
+	pool := NewWorkerPool(WithMaxWorkers(10))
 	start := time.Now()
 	dur := 5 * time.Second
 	ctx, cancel := context.WithTimeout(context.Background(), dur)

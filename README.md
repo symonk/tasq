@@ -37,7 +37,7 @@ import (
 
 func main() {
 	// Instantiate a pool with whatever options fit your needs.
-	pool := New(
+	pool := NewWorkerPool(
 		WithMaxWorkers(10),
 		WithIdleTimeout(time.Second),
 		WithWaitingQueueBuffer(30),
