@@ -250,7 +250,6 @@ func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
 func (w *WorkerPool) Shutdown() {
 	if !w.stopped {
 		w.flushDownQueues()
-		w.wg.Wait()
 		w.stopped = true
 	}
 }
