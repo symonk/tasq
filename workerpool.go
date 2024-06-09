@@ -2,6 +2,7 @@ package workerpool
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -61,9 +62,11 @@ type Scheduler interface {
 	Stopped() bool
 	Stall(ctx context.Context)
 	Stalled() bool
-	Enqueue(task TaskFunc)
-	EnqueueWait(ctx context.Context, task TaskFunc)
+	Enqueue(task TaskFunc) error
+	EnqueueWait(ctx context.Context, task TaskFunc) error
 }
+
+var ErrSubmittedNilTask = errors.New("cannot submit a nil tasks to the pool")
 
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
@@ -291,10 +294,12 @@ func (w *WorkerPool) flushDownQueues() {
 // Enqueue registers a task to the task queue ready to be picked
 // up when workers are available.  Ensures that nil values cannot
 // find their way into the queues.
-func (w *WorkerPool) Enqueue(task TaskFunc) {
-	if task != nil {
-		w.newTasksQueue <- task
+func (w *WorkerPool) Enqueue(task TaskFunc) error {
+	if task == nil {
+		return ErrSubmittedNilTask
 	}
+	w.newTasksQueue <- task
+	return nil
 }
 
 // EnqueueWait registers a task to the task queue but is blocking
@@ -302,9 +307,9 @@ func (w *WorkerPool) Enqueue(task TaskFunc) {
 // provided to break out when required should the processing be
 // taking longer than expected.  Ensures nil values cannot make their
 // way onto the queues.
-func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) {
+func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) error {
 	if task == nil {
-		return
+		return ErrSubmittedNilTask
 	}
 	done := make(chan struct{})
 	w.newTasksQueue <- func() {
@@ -316,10 +321,10 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) {
 		select {
 		// The worker pool has finished the task
 		case <-done:
-			return
+			return nil
 		// The task took too long, consider it aborted.
 		case <-ctx.Done():
-			return
+			return nil
 		}
 	}
 }

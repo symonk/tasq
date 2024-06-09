@@ -67,3 +67,17 @@ func TestWorkerPoolCanBeStalled(t *testing.T) {
 	assert.Greater(t, now.Seconds(), 5*time.Second.Seconds())
 
 }
+
+func TestErrorOnNilTaskEnqueue(t *testing.T) {
+	pool := NewWorkerPool()
+	var task TaskFunc
+	err := pool.Enqueue(task)
+	assert.ErrorIs(t, err, ErrSubmittedNilTask)
+}
+
+func TestErrorOnNilTaskEnqueueWait(t *testing.T) {
+	pool := NewWorkerPool()
+	var task TaskFunc
+	err := pool.EnqueueWait(context.Background(), task)
+	assert.ErrorIs(t, err, ErrSubmittedNilTask)
+}
