@@ -8,21 +8,6 @@ import (
 	"time"
 )
 
-// Worker encapsulates an individual worker
-type Worker struct {
-	work chan TaskFunc
-}
-
-// NewWorker instantiates an new worker object.
-func NewWorker(queue chan TaskFunc) *Worker {
-	return &Worker{work: queue}
-}
-
-// Stall blocks
-func Stall(ctx context.Context) {
-
-}
-
 // Functional Options
 type Option func(*WorkerPool)
 
