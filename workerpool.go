@@ -89,9 +89,9 @@ type WorkerPool struct {
 	stalled bool
 
 	// Concurrency
-	stallMutex      sync.Mutex
-	poolMutex       sync.Mutex
-	workerWaitGroup sync.WaitGroup
+	stallMutex       sync.Mutex
+	poolMutex        sync.Mutex
+	spawnedWorkersWg sync.WaitGroup
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -155,73 +155,52 @@ func (w *WorkerPool) Stalled() bool {
 // work from the client.  This is automatically invoked
 // during initialisation and is run in a asynchronously.
 func (w *WorkerPool) dispatch() {
-	var isIdle bool
-	scaleCheckTicker := time.NewTicker(w.idleCheckPeriod)
-
 	var currentWorkers int
 
-core:
-	// The core worker pool loop
+	// For now we haven't implemented any auto scaling
+	idleTicker := time.NewTicker(time.Minute)
+
+loop:
 	for {
-		// Try and flow work from either the incoming queue to the
-		// waiting queue, or take a task from the waiting queue to
-		// the worker queue.  If any of the other channels are closed
-		// this will return false and cause an exit.
+		// While the holding pen actually has some work to be processed
+		// new tasks are enqueued there and workers will tasks will be
+		// shifted from the waiting area into the worker queues.
 		if currentWorkers != 0 && w.WaitQueueSize() > 0 {
-			if !w.flushWaitingToWorkerQueue() {
-				break core
+			if !w.shiftTasks() {
+				break loop
 			}
 			continue
 		}
 
 		select {
-		case task, ok := <-w.incomingQueue:
+		case incomingTask, ok := <-w.incomingQueue:
 			if !ok {
-				break core
+				break loop
 			}
 			select {
-			// If the (unbuffered) worker queue will accept the task, store it
-			// immediately; bypassing the interim waiting queue.
-			case w.workerQueue <- task:
+			case w.workerQueue <- incomingTask:
 			default:
-				// check if we have spawned workers to capacity, if not simply launch a
-				// worker and give it a task.  This will start the worker loop for that
-				// goroutine.
 				if currentWorkers < w.maximumWorkers {
-					w.workerWaitGroup.Add(1)
-					go w.worker(task)
+					w.spawnedWorkersWg.Add(1)
+					go w.worker(incomingTask)
 					currentWorkers++
 				} else {
-					// The pool is working at capacity and the worker queue would be blocking on the send
-					// Store the task in the waitingQueue to be picked up when workers become available.
-					// atomically update the size of the wait queue.
-					w.waitingQueue <- task
-					w.waitingQueueSize = int32(len(w.waitingQueue))
+					w.waitingQueue <- incomingTask
+					atomic.StoreInt32(&w.waitingQueueSize, int32(len(w.waitingQueue)))
 				}
 			}
-			isIdle = false
-
-		case <-scaleCheckTicker.C:
-			// Continue for now; not sure how to actually scale down workers
-			// What if a worker actually has work in their queue?
-			if isIdle && currentWorkers > 0 {
-				if w.terminateWorker() {
-					currentWorkers--
-					isIdle = true
-				}
-			}
+		case <-idleTicker.C:
+			// TODO: implement this to allow downsizing of workers.
 		}
 	}
-	// Wait for all workers to clear down their queues.
-	w.workerWaitGroup.Wait()
 }
 
-// flushWaitingToWorkerQueue can either take a task
+// shiftTasks can either take a task
 // off the incomingQueue and store it in the waitingQueue
 // or take a task off the waitingQueue and move it to the
 // workerQueue.  If any of the incoming or waiting channels
 // have been closed it returns false causing a start() exit.
-func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
+func (w *WorkerPool) shiftTasks() bool {
 	select {
 	case incomingTask, ok := <-w.incomingQueue:
 		if !ok {
@@ -242,6 +221,8 @@ func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
 // and waits for all workers to clear down their work and the
 // remaining task queue before gracefully exiting.
 func (w *WorkerPool) Shutdown() {
+	defer w.spawnedWorkersWg.Wait()
+	defer close(w.incomingQueue)
 	if !w.stopped {
 		w.signalWorkerShutdown()
 		w.stopped = true
@@ -327,9 +308,12 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) error {
 
 // worker continiously pulls work off the worker queue after it has received
 // its first task directly from the core start loop.  It will sit idling on
-// the workerQueue for future work.
+// the workerQueue for future work.  The worker goroutine `nil` specifics
+// serve two purposes.  The workerpool will internally Enqueue nil tasks
+// for every worker when it is time to shutdown, causing them to process
+// what they have and then exit.
 func (w *WorkerPool) worker(task TaskFunc) {
-	defer w.workerWaitGroup.Done()
+	defer w.spawnedWorkersWg.Done()
 	for task != nil {
 		task()
 		task = <-w.workerQueue
