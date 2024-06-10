@@ -133,16 +133,16 @@ func (w *WorkerPool) MaxWorkers() int {
 // spawned workers in play.  Note: This should be
 // considered an approximation, workers can currently be
 // spawned during the period of asking for this.
-func (w *WorkerPool) ActiveWorkers() int32 {
-	return w.activeWorkers
+func (w *WorkerPool) ActiveWorkers() int {
+	return int(w.activeWorkers)
 }
 
 // WaitQueueSize returns the total number of tasks currently
 // in the interim (wait) queue.  Those that have been
 // processed from the internal task queue but are waiting
 // for a worker to be free.
-func (w *WorkerPool) WaitQueueSize() int32 {
-	return atomic.LoadInt32(&w.waitingQueueSize)
+func (w *WorkerPool) WaitQueueSize() int {
+	return int(atomic.LoadInt32(&w.waitingQueueSize))
 }
 
 // Stopped returns if the workerpool is in a stopped
