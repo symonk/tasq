@@ -40,7 +40,7 @@ func WithMaxWorkers(workers int) Option {
 // they are shutdown.
 func WithIdleTimeout(timeout time.Duration) Option {
 	return func(w *WorkerPool) {
-		w.scalingTimeout = timeout
+		w.idleCheckPeriod = timeout
 	}
 }
 
@@ -48,7 +48,7 @@ func WithIdleTimeout(timeout time.Duration) Option {
 // buffer size for the worker queue.
 func WithBufferSize(size int) Option {
 	return func(w *WorkerPool) {
-		w.holdingQueue = make(chan TaskFunc, size)
+		w.waitingQueue = make(chan TaskFunc, size)
 	}
 }
 
@@ -75,24 +75,22 @@ var ErrSubmittedNilTask = errors.New("cannot submit a nil task to the pool")
 // careful with memory consumption.  The plan is too expose
 // new options to configure buffers (if desired) in future.
 type WorkerPool struct {
-	maximumWorkers int
-	currWorkers    int
-	scalingTimeout time.Duration
-	// The initial Queue for tasks enqueued (unbuffered)
-	newTasksQueue chan TaskFunc
-	// The interim holding pen before workers can process them
-	holdingQueue     chan TaskFunc
-	waitingQueueSize int32
-	// Tasks for workers that have been moved from the interim queue
-	workerQueue chan TaskFunc
+	// Queues (inbound, holding pen, worker queue)
+	incomingQueue chan TaskFunc
+	waitingQueue  chan TaskFunc
+	workerQueue   chan TaskFunc
 
-	stopSignal chan struct{}
-	stopped    bool
-	stalled    bool
-	stallMutex sync.Mutex
-	wpMutex    sync.Mutex
-	completed  chan struct{}
-	wg         sync.WaitGroup
+	// Configuration
+	maximumWorkers   int
+	idleCheckPeriod  time.Duration
+	waitingQueueSize int32
+	stopSignal       chan struct{}
+	stopped          bool
+	stalled          bool
+	stallMutex       sync.Mutex
+	wpMutex          sync.Mutex
+	completed        chan struct{}
+	wg               sync.WaitGroup
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -105,14 +103,14 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 	wp := &WorkerPool{
 		// Can be configured with WithMaxWorkerCount option
 		maximumWorkers: 5,
-		newTasksQueue:  make(chan TaskFunc),
+		incomingQueue:  make(chan TaskFunc),
 		// Can be configured with WithWaitingQueueSize option
-		holdingQueue: make(chan TaskFunc, 1024),
+		waitingQueue: make(chan TaskFunc, 1024),
 		// can be overwritten with the WithScalingTimeout option
-		scalingTimeout: 5 * time.Second,
-		workerQueue:    make(chan TaskFunc),
-		stopSignal:     make(chan struct{}),
-		completed:      make(chan struct{}),
+		idleCheckPeriod: 5 * time.Second,
+		workerQueue:     make(chan TaskFunc),
+		stopSignal:      make(chan struct{}),
+		completed:       make(chan struct{}),
 	}
 
 	// Apply functional options after defaults have been configured
@@ -160,7 +158,7 @@ func (w *WorkerPool) Stalled() bool {
 func (w *WorkerPool) dispatch() {
 	defer close(w.completed)
 	var isIdle bool
-	scaleCheckTicker := time.NewTicker(w.scalingTimeout)
+	scaleCheckTicker := time.NewTicker(w.idleCheckPeriod)
 
 	var currentWorkers int
 
@@ -179,7 +177,7 @@ core:
 		}
 
 		select {
-		case task, ok := <-w.newTasksQueue:
+		case task, ok := <-w.incomingQueue:
 			if !ok {
 				break core
 			}
@@ -195,13 +193,12 @@ core:
 					w.wg.Add(1)
 					go w.worker(task)
 					currentWorkers++
-					w.currWorkers++
 				} else {
 					// The pool is working at capacity and the worker queue would be blocking on the send
 					// Store the task in the waitingQueue to be picked up when workers become available.
 					// atomically update the size of the wait queue.
-					w.holdingQueue <- task
-					w.waitingQueueSize = int32(len(w.holdingQueue))
+					w.waitingQueue <- task
+					w.waitingQueueSize = int32(len(w.waitingQueue))
 				}
 			}
 			isIdle = false
@@ -212,7 +209,6 @@ core:
 			if isIdle && currentWorkers > 0 {
 				if w.terminateWorker() {
 					currentWorkers--
-					w.currWorkers--
 					isIdle = true
 				}
 			}
@@ -229,12 +225,12 @@ core:
 // have been closed it returns false causing a start() exit.
 func (w *WorkerPool) flushWaitingToWorkerQueue() bool {
 	select {
-	case incomingTask, ok := <-w.newTasksQueue:
+	case incomingTask, ok := <-w.incomingQueue:
 		if !ok {
 			return false
 		}
-		w.holdingQueue <- incomingTask
-	case waitingTask, ok := <-w.holdingQueue:
+		w.waitingQueue <- incomingTask
+	case waitingTask, ok := <-w.waitingQueue:
 		if !ok {
 			return false
 		}
@@ -268,7 +264,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	idle.Add(w.maximumWorkers)
 
 	for i := 0; i < w.maximumWorkers; i++ {
-		w.holdingQueue <- func() {
+		w.waitingQueue <- func() {
 			defer idle.Done()
 			<-ctx.Done()
 		}
@@ -289,7 +285,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 // work to enter the pool, preparing for a graceful exit.
 func (w *WorkerPool) signalWorkerShutdown() {
 	for i := 0; i < w.maximumWorkers; i++ {
-		w.newTasksQueue <- nil
+		w.incomingQueue <- nil
 	}
 }
 
@@ -300,7 +296,7 @@ func (w *WorkerPool) Enqueue(task TaskFunc) error {
 	if task == nil {
 		return ErrSubmittedNilTask
 	}
-	w.newTasksQueue <- task
+	w.incomingQueue <- task
 	return nil
 }
 
@@ -314,7 +310,7 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) error {
 		return ErrSubmittedNilTask
 	}
 	done := make(chan struct{})
-	w.newTasksQueue <- func() {
+	w.incomingQueue <- func() {
 		task()
 		done <- struct{}{}
 		close(done)

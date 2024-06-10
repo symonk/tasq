@@ -26,7 +26,7 @@ func TestNegativeMaxWorkers(t *testing.T) {
 
 func TestIdleWorkoutTieout(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, NewWorkerPool(WithIdleTimeout(time.Second)).scalingTimeout, time.Second)
+	assert.Equal(t, NewWorkerPool(WithIdleTimeout(time.Second)).idleCheckPeriod, time.Second)
 }
 
 func TestWaitingQueueSize(t *testing.T) {
