@@ -80,6 +80,7 @@ type WorkerPool struct {
 	spawnedWorkersWg sync.WaitGroup
 
 	shuttingDownNotifier chan struct{}
+	finalized            chan struct{}
 
 	activeWorkers int32
 }
@@ -101,6 +102,7 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 		idleCheckPeriod:      5 * time.Second,
 		workerQueue:          make(chan TaskFunc),
 		shuttingDownNotifier: make(chan struct{}),
+		finalized:            make(chan struct{}),
 	}
 
 	// Apply functional options after defaults have been configured
@@ -197,6 +199,8 @@ loop:
 			// TODO: implement this to allow downsizing of workers.
 		}
 	}
+	w.spawnedWorkersWg.Wait()
+	close(w.finalized)
 }
 
 // shiftTasks can either take a task
@@ -243,7 +247,7 @@ func (w *WorkerPool) Shutdown() {
 		}
 
 	})
-	w.spawnedWorkersWg.Wait()
+	<-w.finalized
 }
 
 // Stall pauses all workers until the given context
