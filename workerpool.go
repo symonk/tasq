@@ -78,6 +78,8 @@ type WorkerPool struct {
 	poolMutex        sync.Mutex
 	spawnedWorkersWg sync.WaitGroup
 
+	shuttingDownNotifier chan struct{}
+
 	activeWorkers int32
 }
 
@@ -102,6 +104,14 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 	// Apply functional options after defaults have been configured
 	for _, opt := range opts {
 		opt(wp)
+	}
+
+	// For now, the buffer size cap enforces a max worker restriction
+	// to enable us to guarantee all workers can be paused etc.  using
+	// a buffered channel is maybe lackluster here, some sort of thread
+	// safe priority queue might be better?
+	if wp.maximumWorkers > cap(wp.waitingQueue) {
+		wp.maximumWorkers = cap(wp.waitingQueue)
 	}
 	go wp.dispatch()
 
@@ -167,6 +177,10 @@ loop:
 			continue
 		}
 
+		// No workers have yet been spawned, or the amount of work in the holding
+		// queue is empty.  Try to shove store tasks directly onto the worker queue
+		// or launch another worker if we are not running at capacity.  If we have
+		// maximised the worker count, move the task on to the holding pen queue.
 		select {
 		case incomingTask, ok := <-w.incomingQueue:
 			if !ok {
@@ -213,9 +227,9 @@ func (w *WorkerPool) shiftTasks() bool {
 	return true
 }
 
-// Shutdown prevents more work from being pushed on to the worker pool
-// and waits for all workers to clear down their work and the
-// remaining task queue before gracefully exiting.
+// Shutdown signals the worker pool to gracefully finish
+// any in flight tasks, scale down workers are consider
+// it's workload finished.
 func (w *WorkerPool) Shutdown() {
 	defer w.spawnedWorkersWg.Wait()
 	defer close(w.incomingQueue)
@@ -225,10 +239,15 @@ func (w *WorkerPool) Shutdown() {
 	}
 }
 
-// Stall blocks until the context has been cancelled.
-// It will gradually block all workers in the pool
-// but they may process other tasks between the call to
-// Stall
+// Stall pauses all workers until the given context
+// is cancelled.  This is achieved by submitting a
+// blocking task to all workers in the pool that
+// when called waits for either the context to cancel
+// or timeout, or the pool to be signalled to shutdown.
+// because of how the tasks are submitted, when calling
+// Pause() it is possible some in flight tasks will be
+// completed before the stalling tasks are queued and
+// accepted by workers.
 func (w *WorkerPool) Stall(ctx context.Context) {
 	w.stallMutex.Lock()
 	defer w.stallMutex.Unlock()
@@ -236,24 +255,22 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	w.stalled = true
 
 	var readyWorkers sync.WaitGroup
+	defer readyWorkers.Wait()
 	readyWorkers.Add(w.maximumWorkers)
 
 	for i := 0; i < w.maximumWorkers; i++ {
 		w.waitingQueue <- func() {
 			defer readyWorkers.Done()
-			<-ctx.Done()
+			select {
+			// User defined context has been cancelled.
+			case <-ctx.Done():
+			// The workerpool has been told to shutdown
+			// Pauses need to clear down to avoid workers
+			// blocking.
+			case <-w.shuttingDownNotifier:
+			}
 		}
-
 	}
-
-	// Wait until all workers have finished waiting for the context.
-	// We should of pushed (and they received) a task that solely
-	// blocks until the context is cancelled.
-	// TODO: race condition if stall is called before all workers are
-	// spawned
-
-	readyWorkers.Wait()
-
 }
 
 // signalWorkerShutdown causes the queues to flush without allowing any new
