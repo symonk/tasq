@@ -69,6 +69,7 @@ type WorkerPool struct {
 	maximumWorkers   int
 	idleCheckPeriod  time.Duration
 	waitingQueueSize int32
+
 	// State Tracking
 	stopped bool
 	stalled bool
@@ -229,12 +230,21 @@ func (w *WorkerPool) shiftTasks() bool {
 
 // Shutdown signals the worker pool to gracefully finish
 // any in flight tasks, scale down workers are consider
-// it's workload finished.
+// it's workload finished.  Shutdown() is blocking until
+// the workerpool has successfully finished the tasks it
+// it is aware of
 func (w *WorkerPool) Shutdown() {
+	// TODO: We need to break the main for loop here
+	// TODO: What if workers are paused how to handle that?
+	// TODO: Mutex state and marking the worker pool stopped
+	// TODO: What if this is called in multiple goroutines? - sync package run once?
+	// TODO: Block until the internal wg is marked completed
+	// TODO: How do we block pending/incoming tasks?
+
 	defer w.spawnedWorkersWg.Wait()
 	defer close(w.incomingQueue)
 	if !w.stopped {
-		w.signalWorkerShutdown()
+		w.queueWorkerShutdownTasks()
 		w.stopped = true
 	}
 }
@@ -273,9 +283,11 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	}
 }
 
-// signalWorkerShutdown causes the queues to flush without allowing any new
+// queueWorkerShutdownTasks causes the queues to flush without allowing any new
 // work to enter the pool, preparing for a graceful exit.
-func (w *WorkerPool) signalWorkerShutdown() {
+// Enqueue() and EnqueueWait() do not allow a nil task from the client
+// this is only possible internally.
+func (w *WorkerPool) queueWorkerShutdownTasks() {
 	for i := 0; i < w.maximumWorkers; i++ {
 		w.incomingQueue <- nil
 	}
@@ -297,7 +309,7 @@ func (w *WorkerPool) Enqueue(task TaskFunc) error {
 // provided to break out when required should the processing be
 // taking longer than expected.  Ensures nil values cannot make their
 // way onto the queues.
-func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) error {
+func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) (err error) {
 	if task == nil {
 		return ErrSubmittedNilTask
 	}
@@ -311,10 +323,10 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) error {
 		select {
 		// The worker pool has finished the task
 		case <-done:
-			return nil
+			return err
 		// The task took too long, consider it aborted.
 		case <-ctx.Done():
-			return nil
+			return err
 		}
 	}
 }
