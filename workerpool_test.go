@@ -93,3 +93,7 @@ func TestErrorOnNilTaskEnqueueWait(t *testing.T) {
 	assert.ErrorIs(t, err, ErrSubmittedNilTask, "cannot submit a nil task to the workerpool")
 	assert.ErrorContains(t, err, "cannot submit a nil task to the pool")
 }
+
+// TODO: Test ideas
+// Pausing a pool before tasks are submitted
+// Enqueueing tasks on a paused pool

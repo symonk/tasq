@@ -92,6 +92,8 @@ type WorkerPool struct {
 	stallMutex       sync.Mutex
 	poolMutex        sync.Mutex
 	spawnedWorkersWg sync.WaitGroup
+
+	activeWorkers int32
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -125,6 +127,14 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 // workers that can handle work in the pool.
 func (w *WorkerPool) MaxWorkers() int {
 	return w.maximumWorkers
+}
+
+// ActiveWorkers returns the total number of currently
+// spawned workers in play.  Note: This should be
+// considered an approximation, workers can currently be
+// spawned during the period of asking for this.
+func (w *WorkerPool) ActiveWorkers() int32 {
+	return w.activeWorkers
 }
 
 // WaitQueueSize returns the total number of tasks currently
@@ -184,6 +194,7 @@ loop:
 					w.spawnedWorkersWg.Add(1)
 					go w.worker(incomingTask)
 					currentWorkers++
+					atomic.StoreInt32(&w.activeWorkers, int32(currentWorkers))
 				} else {
 					w.waitingQueue <- incomingTask
 					atomic.StoreInt32(&w.waitingQueueSize, int32(len(w.waitingQueue)))
@@ -239,12 +250,12 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	defer func() { w.stalled = false }()
 	w.stalled = true
 
-	var idle sync.WaitGroup
-	idle.Add(w.maximumWorkers)
+	var readyWorkers sync.WaitGroup
+	readyWorkers.Add(w.maximumWorkers)
 
 	for i := 0; i < w.maximumWorkers; i++ {
 		w.waitingQueue <- func() {
-			defer idle.Done()
+			defer readyWorkers.Done()
 			<-ctx.Done()
 		}
 
@@ -256,7 +267,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	// TODO: race condition if stall is called before all workers are
 	// spawned
 
-	idle.Wait()
+	readyWorkers.Wait()
 
 }
 
@@ -318,12 +329,6 @@ func (w *WorkerPool) worker(task TaskFunc) {
 		task()
 		task = <-w.workerQueue
 	}
-}
-
-// terminateWorker attempts to break a worker out of the
-// infinite for loop by sending them a nil task
-func (w *WorkerPool) terminateWorker() bool {
-	return false
 }
 
 // validateMaxWorkers ensures the worker pool is correctly configured
