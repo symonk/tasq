@@ -84,13 +84,14 @@ type WorkerPool struct {
 	maximumWorkers   int
 	idleCheckPeriod  time.Duration
 	waitingQueueSize int32
-	stopSignal       chan struct{}
-	stopped          bool
-	stalled          bool
-	stallMutex       sync.Mutex
-	wpMutex          sync.Mutex
-	completed        chan struct{}
-	wg               sync.WaitGroup
+	// State Tracking
+	stopped bool
+	stalled bool
+
+	// Concurrency
+	stallMutex      sync.Mutex
+	poolMutex       sync.Mutex
+	workerWaitGroup sync.WaitGroup
 }
 
 // Verify the workerpool adheres to the Scheduler interface
@@ -109,8 +110,6 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 		// can be overwritten with the WithScalingTimeout option
 		idleCheckPeriod: 5 * time.Second,
 		workerQueue:     make(chan TaskFunc),
-		stopSignal:      make(chan struct{}),
-		completed:       make(chan struct{}),
 	}
 
 	// Apply functional options after defaults have been configured
@@ -139,16 +138,16 @@ func (w *WorkerPool) WaitQueueSize() int32 {
 // Stopped returns if the workerpool is in a stopped
 // state
 func (w *WorkerPool) Stopped() bool {
-	w.wpMutex.Lock()
-	defer w.wpMutex.Unlock()
+	w.poolMutex.Lock()
+	defer w.poolMutex.Unlock()
 	return w.stopped
 }
 
 // Stalled returns if the workerpool is in a throttled
 // state
 func (w *WorkerPool) Stalled() bool {
-	w.wpMutex.Lock()
-	defer w.wpMutex.Unlock()
+	w.poolMutex.Lock()
+	defer w.poolMutex.Unlock()
 	return w.stalled
 }
 
@@ -156,7 +155,6 @@ func (w *WorkerPool) Stalled() bool {
 // work from the client.  This is automatically invoked
 // during initialisation and is run in a asynchronously.
 func (w *WorkerPool) dispatch() {
-	defer close(w.completed)
 	var isIdle bool
 	scaleCheckTicker := time.NewTicker(w.idleCheckPeriod)
 
@@ -190,7 +188,7 @@ core:
 				// worker and give it a task.  This will start the worker loop for that
 				// goroutine.
 				if currentWorkers < w.maximumWorkers {
-					w.wg.Add(1)
+					w.workerWaitGroup.Add(1)
 					go w.worker(task)
 					currentWorkers++
 				} else {
@@ -215,7 +213,7 @@ core:
 		}
 	}
 	// Wait for all workers to clear down their queues.
-	w.wg.Wait()
+	w.workerWaitGroup.Wait()
 }
 
 // flushWaitingToWorkerQueue can either take a task
@@ -331,7 +329,7 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) error {
 // its first task directly from the core start loop.  It will sit idling on
 // the workerQueue for future work.
 func (w *WorkerPool) worker(task TaskFunc) {
-	defer w.wg.Done()
+	defer w.workerWaitGroup.Done()
 	for task != nil {
 		task()
 		task = <-w.workerQueue
