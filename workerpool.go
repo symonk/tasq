@@ -51,7 +51,8 @@ type Scheduler interface {
 	EnqueueWait(ctx context.Context, task TaskFunc) error
 }
 
-var ErrSubmittedNilTask = errors.New("cannot submit a nil task to the pool")
+var ErrNilTask = errors.New("cannot submit a nil task to the pool")
+var ErrPoolStopped = errors.New("cannot submit a task to a shutdown pool")
 
 // WorkerPool is the core scheduler.  It internally manages
 // a task queue and various workers up to the worker count.
@@ -98,8 +99,9 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 		// Can be configured with WithWaitingQueueSize option
 		waitingQueue: make(chan TaskFunc, 1024),
 		// can be overwritten with the WithScalingTimeout option
-		idleCheckPeriod: 5 * time.Second,
-		workerQueue:     make(chan TaskFunc),
+		idleCheckPeriod:      5 * time.Second,
+		workerQueue:          make(chan TaskFunc),
+		shuttingDownNotifier: make(chan struct{}),
 	}
 
 	// Apply functional options after defaults have been configured
@@ -147,14 +149,6 @@ func (w *WorkerPool) Stopped() bool {
 	w.poolMutex.Lock()
 	defer w.poolMutex.Unlock()
 	return w.stopped
-}
-
-// Stalled returns if the workerpool is in a throttled
-// state
-func (w *WorkerPool) Stalled() bool {
-	w.poolMutex.Lock()
-	defer w.poolMutex.Unlock()
-	return w.stalled
 }
 
 // dispatch initialises the worker pool ready to accept
@@ -232,23 +226,28 @@ func (w *WorkerPool) shiftTasks() bool {
 // any in flight tasks, scale down workers are consider
 // it's workload finished.  Shutdown() is blocking until
 // the workerpool has successfully finished the tasks it
-// it is aware of
+// it is aware of.  Call Shutdown() is safe to be called
+// by parallel goroutines.
 func (w *WorkerPool) Shutdown() {
-	// TODO: We need to break the main for loop here
-	// TODO: What if workers are paused how to handle that?
-	// TODO: Mutex state and marking the worker pool stopped
-	// TODO: What if this is called in multiple goroutines? - sync package run once?
-	// TODO: Block until the internal wg is marked completed
-	// TODO: How do we block pending/incoming tasks?
-	// TODO: Close all 3 queues necessary, just task queue?
-	// TODO: But what happens to Enqueue after closing - race condition?
+	var once sync.Once
+	once.Do(func() {
+		if !w.stopped {
+			// submit nil tasks into all of the workers
+			// To cause them to shutdown
+			w.queueWorkerShutdownTasks()
+			// workers may be paused waiting on a context
+			// they also wait for a receive on the shutting
+			// down channel, break them out of the stall
+			close(w.shuttingDownNotifier)
+			close(w.incomingQueue)
+			close(w.waitingQueue)
+			close(w.workerQueue)
 
-	defer w.spawnedWorkersWg.Wait()
-	defer close(w.incomingQueue)
-	if !w.stopped {
-		w.queueWorkerShutdownTasks()
-		w.stopped = true
-	}
+			w.stopped = true
+		}
+
+	})
+	w.spawnedWorkersWg.Wait()
 }
 
 // Stall pauses all workers until the given context
@@ -278,11 +277,19 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 			case <-ctx.Done():
 			// The workerpool has been told to shutdown
 			// Pauses need to clear down to avoid workers
-			// blocking.
+			// blocking.  This case will only fire when
+			// Shutdown() is invoked and the channel is
+			// closed.
 			case <-w.shuttingDownNotifier:
 			}
 		}
 	}
+}
+
+// Stalled returns if the workerpool is in a throttled
+// state
+func (w *WorkerPool) Stalled() bool {
+	return w.stallMutex.TryLock()
 }
 
 // queueWorkerShutdownTasks causes the queues to flush without allowing any new
@@ -299,8 +306,8 @@ func (w *WorkerPool) queueWorkerShutdownTasks() {
 // up when workers are available.  Ensures that nil values cannot
 // find their way into the queues.
 func (w *WorkerPool) Enqueue(task TaskFunc) error {
-	if task == nil {
-		return ErrSubmittedNilTask
+	if err := w.checkTask(task); err != nil {
+		return err
 	}
 	w.incomingQueue <- task
 	return nil
@@ -311,9 +318,9 @@ func (w *WorkerPool) Enqueue(task TaskFunc) error {
 // provided to break out when required should the processing be
 // taking longer than expected.  Ensures nil values cannot make their
 // way onto the queues.
-func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) (err error) {
-	if task == nil {
-		return ErrSubmittedNilTask
+func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) error {
+	if err := w.checkTask(task); err != nil {
+		return err
 	}
 	done := make(chan struct{})
 	w.incomingQueue <- func() {
@@ -325,12 +332,24 @@ func (w *WorkerPool) EnqueueWait(ctx context.Context, task TaskFunc) (err error)
 		select {
 		// The worker pool has finished the task
 		case <-done:
-			return err
+			return nil
 		// The task took too long, consider it aborted.
 		case <-ctx.Done():
-			return err
+			return nil
 		}
 	}
+}
+
+// checkTask validates the task is likely to succeed when
+// submitted to the pool
+func (w *WorkerPool) checkTask(task TaskFunc) error {
+	if w.stopped {
+		return ErrPoolStopped
+	}
+	if task == nil {
+		return ErrNilTask
+	}
+	return nil
 }
 
 // worker continiously pulls work off the worker queue after it has received

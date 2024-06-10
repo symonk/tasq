@@ -21,7 +21,7 @@ jobs:
       - name: Vet
         run: go get ./...
       - name: Test
-        run: go test -v -json -shuffle on -race -buildvcs -covermode=atomic -coverprofile=coverage.out
+        run: go test -v -shuffle on -race -buildvcs -covermode=atomic -coverprofile=coverage.out
       - name: Upload Code Coverage
         uses: codecov/codecov-action@v4.0.1
         with:
