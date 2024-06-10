@@ -11,17 +11,17 @@ import (
 
 func TestSize(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, NewWorkerPool(WithMaxWorkers(100)).Length(), 100)
+	assert.Equal(t, NewWorkerPool(WithMaxWorkers(100)).MaxWorkers(), 100)
 }
 
 func TestValidateMaxWorkers(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, NewWorkerPool(WithMaxWorkers(0)).Length(), 1)
+	assert.Equal(t, NewWorkerPool(WithMaxWorkers(0)).MaxWorkers(), 1)
 }
 
 func TestNegativeMaxWorkers(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, NewWorkerPool(WithMaxWorkers(-100)).Length(), 1)
+	assert.Equal(t, NewWorkerPool(WithMaxWorkers(-100)).MaxWorkers(), 1)
 }
 
 func TestIdleWorkoutTieout(t *testing.T) {

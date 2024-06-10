@@ -121,9 +121,9 @@ func NewWorkerPool(opts ...Option) *WorkerPool {
 	return wp
 }
 
-// Length returns the total number of maximum
+// MaxWorkers returns the total number of maximum
 // workers that can handle work in the pool.
-func (w *WorkerPool) Length() int {
+func (w *WorkerPool) MaxWorkers() int {
 	return w.maximumWorkers
 }
 
