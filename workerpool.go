@@ -46,7 +46,6 @@ type Scheduler interface {
 	Shutdown()
 	Stopped() bool
 	Stall(ctx context.Context)
-	Stalled() bool
 	Enqueue(task TaskFunc) error
 	EnqueueWait(ctx context.Context, task TaskFunc) error
 }
@@ -76,7 +75,7 @@ type WorkerPool struct {
 	stalled bool
 
 	// Concurrency
-	stallMutex       sync.Mutex
+	stallMutex       sync.RWMutex
 	poolMutex        sync.Mutex
 	spawnedWorkersWg sync.WaitGroup
 
@@ -266,31 +265,16 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	defer func() { w.stalled = false }()
 	w.stalled = true
 
-	var stalledWorkers sync.WaitGroup
-	stalledWorkers.Add(w.maximumWorkers)
-
-	for i := 0; i < w.ActiveWorkers(); i++ {
-		w.waitingQueue <- func() {
-			defer stalledWorkers.Done()
-			select {
-			// User defined context has been cancelled.
-			case <-ctx.Done():
-			// The workerpool has been told to shutdown
-			// Pauses need to clear down to avoid workers
-			// blocking.  This case will only fire when
-			// Shutdown() is invoked and the channel is
-			// closed.
-			case <-w.shuttingDownNotifier:
-			}
-		}
+	select {
+	// User defined context has been cancelled.
+	case <-ctx.Done():
+	// The workerpool has been told to shutdown
+	// Pauses need to clear down to avoid workers
+	// blocking.  This case will only fire when
+	// Shutdown() is invoked and the channel is
+	// closed.
+	case <-w.shuttingDownNotifier:
 	}
-	stalledWorkers.Wait()
-}
-
-// Stalled returns if the workerpool is in a throttled
-// state
-func (w *WorkerPool) Stalled() bool {
-	return w.stallMutex.TryLock()
 }
 
 // queueWorkerShutdownTasks causes the queues to flush without allowing any new
@@ -362,7 +346,10 @@ func (w *WorkerPool) checkTask(task TaskFunc) error {
 func (w *WorkerPool) worker(task TaskFunc) {
 	defer w.spawnedWorkersWg.Done()
 	for task != nil {
+		// TODO: Evaluate this performance, its likely TERRIBLE!
+		w.stallMutex.RLock()
 		task()
+		w.stallMutex.RUnlock()
 		task = <-w.workerQueue
 	}
 }
