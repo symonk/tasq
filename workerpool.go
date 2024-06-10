@@ -240,6 +240,8 @@ func (w *WorkerPool) Shutdown() {
 	// TODO: What if this is called in multiple goroutines? - sync package run once?
 	// TODO: Block until the internal wg is marked completed
 	// TODO: How do we block pending/incoming tasks?
+	// TODO: Close all 3 queues necessary, just task queue?
+	// TODO: But what happens to Enqueue after closing - race condition?
 
 	defer w.spawnedWorkersWg.Wait()
 	defer close(w.incomingQueue)
