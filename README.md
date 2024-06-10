@@ -23,8 +23,8 @@ the hassle of managing worker dispatching yourself `tasq` is for you.
 error handling scenarios where upstream dependencies may be non functional.
 
 > [!NOTE]
-> By design `tasq` does not propagate errors or return values, have your tasks listen on a channel for
-> return values etc.
+> By design `tasq` does not propagate errors or return values, tasks should handle their own persistence
+> by (for example) shovelling their return values into a channel etc.
 
 -----
 
