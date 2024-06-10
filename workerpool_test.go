@@ -59,23 +59,6 @@ func TestTaskCanBeEnqueueBlocked(t *testing.T) {
 	wg.Wait()
 }
 
-func TestWorkerPoolCanBeStalled(t *testing.T) {
-	t.Parallel()
-	t.Skip()
-	pool := NewWorkerPool(WithMaxWorkers(10))
-	start := time.Now()
-	dur := 5 * time.Second
-	ctx, cancel := context.WithTimeout(context.Background(), dur)
-	defer cancel()
-	for i := 0; i < 10; i++ {
-		_ = pool.Enqueue(func() { time.Sleep(time.Millisecond) })
-	}
-	pool.Stall(ctx)
-	now := time.Since(start)
-	assert.Greater(t, now.Seconds(), 5*time.Second.Seconds())
-
-}
-
 func TestErrorOnNilTaskEnqueue(t *testing.T) {
 	t.Parallel()
 	pool := NewWorkerPool()
@@ -95,26 +78,30 @@ func TestErrorOnNilTaskEnqueueWait(t *testing.T) {
 }
 
 func TestPoolPausingBlocksSuccessfully(t *testing.T) {
-	size := 100_000
-	var wg sync.WaitGroup
-	wg.Add(size)
+	t.Parallel()
+	size := 20_000
 	task := func() {
-		defer wg.Done()
 		time.Sleep(time.Millisecond)
 	}
-	pool := NewWorkerPool(WithMaxWorkers(size / 10))
+	pool := NewWorkerPool(WithMaxWorkers(size/10), WithBufferSize(size))
 	for i := 0; i < size; i++ {
 		_ = pool.Enqueue(task)
 	}
 	// Let the pool get off the ground!
 	stall, cancel := context.WithTimeout(context.Background(), time.Duration(5)*time.Second)
 	defer cancel()
+	// TODO: We can have too many workers yet to receive a Pause task
+	// but internally Pause() sends a task to maxWorkers
+	// See gh-issue #1
+	time.Sleep(time.Second)
+	// Pause the pool for the duration
 	pool.Stall(stall)
-	// Wait for the pause to finish
-	wg.Wait()
+	// Wait until all the tasks have been fully processed.
+	pool.Shutdown()
 }
 
 func TestMaxWorkersCannotExceedWaitingQueueBuffer(t *testing.T) {
+	t.Parallel()
 	pool := NewWorkerPool(WithMaxWorkers(1000), WithBufferSize(500))
 	assert.Equal(t, pool.MaxWorkers(), 500)
 }

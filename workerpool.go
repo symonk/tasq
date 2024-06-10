@@ -240,9 +240,6 @@ func (w *WorkerPool) Shutdown() {
 			// down channel, break them out of the stall
 			close(w.shuttingDownNotifier)
 			close(w.incomingQueue)
-			close(w.waitingQueue)
-			close(w.workerQueue)
-
 			w.stopped = true
 		}
 
@@ -260,18 +257,21 @@ func (w *WorkerPool) Shutdown() {
 // completed before the stalling tasks are queued and
 // accepted by workers.
 func (w *WorkerPool) Stall(ctx context.Context) {
+	// TODO: Stall() can block indefinitely because we are submitting
+	// Waiting tasks to maxworkers (now w.ActiveWorkers()) - but I'm
+	// not sure thats thread safe and still has a subtle bug.  Can
+	// this be done with a mutex without absolutely horrible performance?
 	w.stallMutex.Lock()
 	defer w.stallMutex.Unlock()
 	defer func() { w.stalled = false }()
 	w.stalled = true
 
-	var readyWorkers sync.WaitGroup
-	defer readyWorkers.Wait()
-	readyWorkers.Add(w.maximumWorkers)
+	var stalledWorkers sync.WaitGroup
+	stalledWorkers.Add(w.maximumWorkers)
 
-	for i := 0; i < w.maximumWorkers; i++ {
+	for i := 0; i < w.ActiveWorkers(); i++ {
 		w.waitingQueue <- func() {
-			defer readyWorkers.Done()
+			defer stalledWorkers.Done()
 			select {
 			// User defined context has been cancelled.
 			case <-ctx.Done():
@@ -284,6 +284,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 			}
 		}
 	}
+	stalledWorkers.Wait()
 }
 
 // Stalled returns if the workerpool is in a throttled
