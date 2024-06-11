@@ -10,7 +10,7 @@
 > [!CAUTION]
 > tasq is currently in alpha and not fit for production level use.
 
-# Tasq (Task Queue)
+# Tasq (_Task Queue_)
 
 `tasq` is a high performance worker pool for distributing tasks across a collection of worker
 goroutines.  `tasq` is dynamic in nature and auto scales depending on the number of work available
