@@ -13,6 +13,7 @@ import (
 func TestMain(m *testing.M) {
 	// TODO: Fix issues to enabble properly
 	// goleak.VerifyTestMain(m)
+	m.Run()
 }
 
 func TestSize(t *testing.T) {
