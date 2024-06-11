@@ -2,6 +2,7 @@ package tasq
 
 import (
 	"context"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 func TestMain(m *testing.M) {
 	// TODO: Fix issues to enabble properly
 	// goleak.VerifyTestMain(m)
-	m.Run()
+	os.Exit(m.Run())
 }
 
 func TestSize(t *testing.T) {
