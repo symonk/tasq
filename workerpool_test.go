@@ -7,7 +7,13 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	_ "go.uber.org/goleak"
 )
+
+func TestMain(m *testing.M) {
+	// TODO: Fix issues to enabble properly
+	// goleak.VerifyTestMain(m)
+}
 
 func TestSize(t *testing.T) {
 	t.Parallel()

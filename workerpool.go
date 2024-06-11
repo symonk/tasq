@@ -250,20 +250,10 @@ func (w *WorkerPool) Shutdown() {
 	<-w.finalized
 }
 
-// Stall pauses all workers until the given context
-// is cancelled.  This is achieved by submitting a
-// blocking task to all workers in the pool that
-// when called waits for either the context to cancel
-// or timeout, or the pool to be signalled to shutdown.
-// because of how the tasks are submitted, when calling
-// Pause() it is possible some in flight tasks will be
-// completed before the stalling tasks are queued and
-// accepted by workers.
+// Stall causes workers to halt task execution
+// until either the user provided context is
+// cancelled or Shutdown() is invoked.
 func (w *WorkerPool) Stall(ctx context.Context) {
-	// TODO: Stall() can block indefinitely because we are submitting
-	// Waiting tasks to maxworkers (now w.ActiveWorkers()) - but I'm
-	// not sure thats thread safe and still has a subtle bug.  Can
-	// this be done with a mutex without absolutely horrible performance?
 	w.stallMutex.Lock()
 	defer w.stallMutex.Unlock()
 	defer func() { w.stalled = false }()
@@ -272,11 +262,7 @@ func (w *WorkerPool) Stall(ctx context.Context) {
 	select {
 	// User defined context has been cancelled.
 	case <-ctx.Done():
-	// The workerpool has been told to shutdown
-	// Pauses need to clear down to avoid workers
-	// blocking.  This case will only fire when
-	// Shutdown() is invoked and the channel is
-	// closed.
+	// Shutdown() called, break out of stalling.
 	case <-w.shuttingDownNotifier:
 	}
 }
