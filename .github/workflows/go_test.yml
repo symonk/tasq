@@ -17,9 +17,9 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
       - name: Install dependencies
-        run: go get .
-      - name: Vet
         run: go get ./...
+      - name: Vet
+        run: go vet ./...
       - name: Test
         run: go test -v -shuffle on -race -buildvcs -covermode=atomic -coverprofile=coverage.out
       - name: Upload Code Coverage
