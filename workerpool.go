@@ -347,8 +347,5 @@ func (w *WorkerPool) worker(task TaskFunc) {
 // validateMaxWorkers ensures the worker pool is correctly configured
 // with atleast a single worker.
 func validateMaxWorkers(workers int) int {
-	if workers < 1 {
-		return 1
-	}
-	return workers
+	return max(workers, 1)
 }
