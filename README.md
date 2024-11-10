@@ -26,6 +26,8 @@ error handling scenarios where upstream dependencies may be non functional.
 > By design `tasq` does not propagate errors or return values, tasks should handle their own persistence
 > by (for example) shovelling their return values into a channel etc.
 
+`tasq` follows semantic versioning.
+
 -----
 
 ### Quickstart:
