@@ -1,7 +1,10 @@
 package tasq
 
 import (
+	"context"
 	"sync"
+
+	"github.com/symonk/tasq/internal/contract"
 )
 
 // Worker is responsible for processing tasks
@@ -22,7 +25,12 @@ type Tasq struct {
 	currWorkers int
 	stopped     bool
 	stoppedMu   sync.Mutex
+
+	// shutdown specifics
 }
+
+// Ensure Tasq implements Pooler
+var _ contract.Pooler = (*Tasq)(nil)
 
 // New instantiates a new Tasq instance and applies the
 // appropriate functional options to it.
@@ -73,6 +81,17 @@ func (t *Tasq) Stop() {
 	t.stoppedMu.Lock()
 	defer t.stoppedMu.Unlock()
 	t.stopped = true
+}
+
+// Throttle causes blocking across the workers until
+// the given context is cancelled/timed out.  This allows
+// temporarily throttling the queue tasks.  Right now the
+// tasks the workers have accepted prior to this being called
+// will be invoked, so this is not an immediate halt, N number
+// of tasks will remain attempted until the halt propagates.
+// TODO: Consider a way of doing this with immediate halting
+func (t *Tasq) Throttle(ctx context.Context) {
+
 }
 
 // Enqueue is responsible for preparing a user defined task to
