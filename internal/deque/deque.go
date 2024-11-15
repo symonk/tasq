@@ -1,4 +1,4 @@
-package tasq
+package deque
 
 type DoubleEndedQueue struct {
 }
