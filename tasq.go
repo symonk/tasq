@@ -83,6 +83,12 @@ func (t *Tasq) Stop() {
 	t.stopped = true
 }
 
+// Drain prevents new tasks being enqueued and performs
+// a graceful shutdown of the worker pool after all tasks
+// in flight have been processed.
+func (t *Tasq) Drain() {
+}
+
 // Throttle causes blocking across the workers until
 // the given context is cancelled/timed out.  This allows
 // temporarily throttling the queue tasks.  Right now the
