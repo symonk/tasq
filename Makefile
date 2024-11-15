@@ -25,7 +25,6 @@ audit: test
 	test -z "$(shell gofmt -l .)"
 	go vet ./...
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
-	echo "foo"
 	ifndef LANGCI
 		$(error "golangci-lint not installed, please install it on your system before continuing")
 	endif
