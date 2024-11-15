@@ -18,3 +18,10 @@ func New(opts ...Option) *Tasq {
 func (t Tasq) MaxWorkers() int {
 	return t.maxWorkers
 }
+
+// Stop drains all tasks in the queue and terminates the pool.
+// When the pool is in a stopped state no work tasks will be
+// enqueued.
+func (t *Tasq) Stop() {
+
+}

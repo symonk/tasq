@@ -1,3 +1,5 @@
+LANGCI := $(shell command -v golangci-lint 2> /dev/null) 
+
 ## help: print this help message.
 .PHONY: help
 help:
@@ -23,6 +25,11 @@ audit: test
 	test -z "$(shell gofmt -l .)"
 	go vet ./...
 	go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	echo "foo"
+	ifndef LANGCI
+		$(error "golangci-lint not installed, please install it on your system before continuing")
+	endif
+
 
 ## tidy: tidy modfiles and format
 tidy:
