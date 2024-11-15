@@ -28,6 +28,7 @@ audit: test
 	ifndef LANGCI
 		$(error "golangci-lint not installed, please install it on your system before continuing")
 	endif
+	golangci-lint run
 
 
 ## tidy: tidy modfiles and format

@@ -2,13 +2,29 @@ run:
   timeout: 5m
   modules-download-mode: readonly
 
+output:
+  sort-results: true
+  print-issued-lines: false
+
 linters:
+  disable-all: true
   enable:
     - errcheck
+    - gosimple
+    - ineffassign
+    - unused
     - goimports
-    - golint
     - govet
     - staticcheck
+    - revive
+  
+linters-settings:
+  govev:
+    enable:
+      - niliness
+      - reflectvaluecompare
+      - sortslice
+      - unusedwrite
 
 issues:
   exclude-use-default: false
