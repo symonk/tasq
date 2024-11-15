@@ -2,19 +2,26 @@ package tasq
 
 import (
 	"sync"
-
-	"github.com/symonk/tasq/internal/deque"
 )
 
+// Worker is responsible for processing tasks
+type Worker struct {
+}
+
 type Tasq struct {
+
+	// queue specifics
+	waitingQueueSize int
+	waitingCh        chan func()
+
+	processingQueueSize int
+	processingCh        chan func()
+
+	// worker specifics
 	maxWorkers  int
 	currWorkers int
 	stopped     bool
 	stoppedMu   sync.Mutex
-
-	activeCh   chan func()
-	waitingCh  chan func()
-	holdingPen deque.DoubleEndedQueue
 }
 
 // New instantiates a new Tasq instance and applies the
@@ -25,19 +32,24 @@ func New(opts ...Option) *Tasq {
 	for _, opt := range opts {
 		opt(t)
 	}
+	t.waitingCh = make(chan func(), t.waitingQueueSize)
+	t.processingCh = make(chan func(), t.processingQueueSize)
+	go t.dispatch()
 	return t
 }
 
 // dispatch is the core implementation of the worker pool
 // and is responsible for handling and executing tasks.
+// TODO: This needs a lot of work
 func (t *Tasq) dispatch() {
 	for {
 		select {
-		case <-t.activeCh:
-			// do nothing for now
+		case t := <-t.waitingCh:
+			_ = t
+		case t2 := <-t.processingCh:
+			_ = t2
 		}
 	}
-
 }
 
 // MaxWorkers returns the maximum number of workers.
