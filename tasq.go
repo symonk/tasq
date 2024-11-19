@@ -70,7 +70,13 @@ Core:
 		// queues will be blocked at this point. (implement a double ended Q)
 		// TODO: To be accurate here do we need a mutex lock around this, perhaps a
 		// read only lock check? tho the performance implications are not subtle possibly.
-
+		if t.HasBackPressure() {
+			// TODO: This likely doesn't need the mutex as we are the single goroutine writing
+			// tasks into such queues, there is no race condition here really.
+			t.processHoldingPen()
+			break Core
+		}
+		// The holding pen is empty, go directly to the channels.
 		select {
 		case t1 := <-t.waitingCh:
 			t.processingCh <- t1
@@ -93,6 +99,13 @@ func (t *Tasq) HasBackPressure() bool {
 	t.penMu.RLock()
 	defer t.penMu.RUnlock()
 	return len(t.holdingPen) > 0
+}
+
+// processHoldingPen is responsible for getting the backfilled tasks
+// out of the queue buffer and into the core waiting/processing internal
+// machinery.
+func (t *Tasq) processHoldingPen() {
+
 }
 
 // MaxWorkers returns the maximum number of workers.
