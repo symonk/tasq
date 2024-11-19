@@ -1,5 +1,7 @@
 package tasq
 
+import "time"
+
 type Option func(t *Tasq)
 
 // WithMaxWorkers sets the maximum number of workers
@@ -23,5 +25,11 @@ func WithWaitingQueueSize(size int) Option {
 func WithActiveQueueSize(size int) Option {
 	return func(t *Tasq) {
 		t.processingQueueSize = size
+	}
+}
+
+func WithWorkerCheckDuration(dur time.Duration) Option {
+	return func(t *Tasq) {
+		t.workerIdleDuration = dur
 	}
 }

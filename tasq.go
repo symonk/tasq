@@ -2,20 +2,21 @@ package tasq
 
 import (
 	"context"
+	"fmt"
 	"sync"
+	"time"
 
 	"github.com/symonk/tasq/internal/contract"
 )
-
-// Worker is responsible for processing tasks
-type Worker struct {
-}
 
 type Tasq struct {
 
 	// queue specifics
 	waitingQueueSize int
 	waitingCh        chan func()
+	// Use slice for now, but reconsider data structures for future.
+	holdingPen []func()
+	penMu      sync.RWMutex
 
 	processingQueueSize int
 	processingCh        chan func()
@@ -27,6 +28,8 @@ type Tasq struct {
 	stoppedMu   sync.Mutex
 
 	// shutdown specifics
+	terminated         chan struct{}
+	workerIdleDuration time.Duration
 }
 
 // Ensure Tasq implements Pooler
@@ -37,9 +40,12 @@ var _ contract.Pooler = (*Tasq)(nil)
 // Returns the new instances of Tasq
 func New(opts ...Option) *Tasq {
 	t := &Tasq{}
+	t.workerIdleDuration = 3 * time.Second
 	for _, opt := range opts {
 		opt(t)
 	}
+	// TODO: Don't make these buffered, use another data structure
+	// to build a backpressure mechanism.
 	t.waitingCh = make(chan func(), t.waitingQueueSize)
 	t.processingCh = make(chan func(), t.processingQueueSize)
 	go t.dispatch()
@@ -50,14 +56,43 @@ func New(opts ...Option) *Tasq {
 // and is responsible for handling and executing tasks.
 // TODO: This needs a lot of work
 func (t *Tasq) dispatch() {
+	workerKiller := time.NewTimer(3 * time.Second)
+	isOversized := false
+	_ = isOversized
+
+	// TODO: Channel specifics on shutdown etc.
+
+Core:
 	for {
+
+		// If our slice of tasks is backfilling, there is pressure already on the
+		// channel queues, keep buffering the tasks as talking directly to our other
+		// queues will be blocked at this point. (implement a double ended Q)
+		// TODO: To be accurate here do we need a mutex lock around this, perhaps a
+		// read only lock check? tho the performance implications are not subtle possibly.
+
 		select {
-		case t := <-t.waitingCh:
-			_ = t
+		case t1 := <-t.waitingCh:
+			t.processingCh <- t1
 		case t2 := <-t.processingCh:
+			fmt.Println("processing task")
 			_ = t2
+		case <-workerKiller.C:
+			workerKiller.Reset(3 * time.Second)
+			// TODO: Scale down our workers by -1, something is idle!
 		}
+		break Core
 	}
+}
+
+// HasBackPressure checks if the queue for holding tasks to be
+// processed in future is populated.  If it is, there is no point
+// going directly to the channels, this check is utilised to know
+// if we should push onto the holden pen deque in future.
+func (t *Tasq) HasBackPressure() bool {
+	t.penMu.RLock()
+	defer t.penMu.RUnlock()
+	return len(t.holdingPen) > 0
 }
 
 // MaxWorkers returns the maximum number of workers.
@@ -110,4 +145,34 @@ func (t *Tasq) Enqueue(task func()) string {
 
 func (t *Tasq) EnqueueWait(task func()) string {
 	return ""
+}
+
+// ScaleUp adds a new worker into the pool to cope with
+// higher demand.  If workers have set idle for a period
+// of time, A timer/tick check ensues and scales down where
+// appropriate.  Thi is configurable via the WithWorkerCheck(dur)
+// option.
+func (t *Tasq) ScaleUp() {
+
+}
+
+// ScaleDown removes an idle worker from the pool, down to
+// zero (0) workers when the pool is completely unutilised.
+// the cost for worker creation is trivial in the larger
+// scheme of things.
+func (t *Tasq) ScaleDown() {
+
+}
+
+// ----- Worker specifics ----- //
+
+type Worker struct {
+}
+
+func (w *Worker) Run() {
+
+}
+
+func (w *Worker) Terminate() {
+
 }
