@@ -86,9 +86,9 @@ core:
 			break core
 		}
 
-		// There is no tasks currently in the queued queue.  We can directly
-		// insert the tasks to the waiting queue or process tasks from the
-		// waiting queue into the processing queue.
+		// There is currently no tasks in the interim queue backing up, we can safely
+		// look to read one from the incoming queue and slot it directly onto our
+		// processing queue.
 		select {
 		case inboundTask, ok := <-t.incomingQueue:
 			// Attempt to move a task from a waiting state, into a processing one.
@@ -97,7 +97,8 @@ core:
 				break core
 			}
 			select {
-			case t.incomingQueue <- inboundTask:
+			case t.processingQueue <- inboundTask:
+				// We have directly put a task on the processing queue.
 				// Perform a worker check here, we may need to scale the workers
 				// towards maximum configured capacity.
 				if t.currWorkers < t.maxWorkers {
@@ -108,6 +109,7 @@ core:
 				// We have been processing work, there is no need to be scaling down the workers.
 				processedTasks = false
 			}
+
 		case <-workerKiller.C:
 			// There have been no processed tasks for the entire duration of the idle checking duration
 			// scale down one worker, down to zero.

@@ -42,12 +42,12 @@ import (
 )
 
 func main() {
-    tasq := tasq.New(tasq.WithMaxWorkers(10))
+    pool := tasq.New(tasq.WithMaxWorkers(10))
     results := make(chan string)
     for i := range 100 {
-        tasq.Enqueue(func() { 
-        time.Sleep(time.Second)
-        results <- fmt.Sprintf("%d", i)
+        pool.Enqueue(func() { 
+            time.Sleep(time.Second)
+            results <- fmt.Sprintf("%d", i)
         })
     }
     close(results)
@@ -56,6 +56,6 @@ func main() {
             fmt.Println(r)
         }
     }()
-    tasq.Stop()
+    pool.Stop()
 }
 ```
