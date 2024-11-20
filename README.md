@@ -32,3 +32,30 @@ error handling scenarios where upstream dependencies may be non functional.
 
 ### Quickstart:
 
+```go
+package main
+
+import (
+    "github.com/symonk/tasq
+
+    "time"
+)
+
+func main() {
+    tasq := tasq.New(tasq.WithMaxWorkers(10))
+    results := make(chan string)
+    for i := range 100 {
+        tasq.Enqueue(func() { 
+        time.Sleep(time.Second)
+        results <- fmt.Sprintf("%d", i)
+        })
+    }
+    close(results)
+    go func() {
+        for r := range results {
+            fmt.Println(r)
+        }
+    }()
+    tasq.Stop()
+}
+```
