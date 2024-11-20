@@ -18,13 +18,13 @@ func WithMaxWorkers(max int) Option {
 // waiting queue is tasks waiting to be picked up by a worker
 func WithWaitingQueueSize(size int) Option {
 	return func(t *Tasq) {
-		t.waitingQueueSize = size
+		t.taskQueueSize = size
 	}
 }
 
 func WithActiveQueueSize(size int) Option {
 	return func(t *Tasq) {
-		t.processingQueueSize = size
+		t.activeQueueSize = size
 	}
 }
 

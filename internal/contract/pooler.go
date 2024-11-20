@@ -4,8 +4,8 @@ import "context"
 
 // Pooler is the interface for the underlying worker pool
 type Pooler interface {
-	Enqueue(task func()) string
-	EnqueueWait(task func()) string
+	Enqueue(task func())
+	EnqueueWait(task func())
 
 	Stop()
 	Drain()

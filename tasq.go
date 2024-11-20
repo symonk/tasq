@@ -2,24 +2,39 @@ package tasq
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/symonk/tasq/internal/contract"
 )
 
+// Task is a simple function without args or a return value.
+// Task types are submitted to the Tasq for processing.
+// At present, users should handle return types and throttling
+// on the client side.
+type Task func()
+
+const (
+	// workerIdleTimeout is the default duration that the pool checks for
+	// dormant/idle workers to cause them to be shutdown.
+	workerIdleTimeout = time.Second * 3
+)
+
+// Tasq is the worker pool implementation.  It has
+// three main queues.
+// The task Q is a channel that accepts all tasks and stores them in the interim holding pen
+// Tasks are then taken from the holding pen, into the active queue
 type Tasq struct {
 
 	// queue specifics
-	waitingQueueSize int
-	waitingCh        chan func()
-	// Use slice for now, but reconsider data structures for future.
-	holdingPen []func()
-	penMu      sync.RWMutex
+	taskQueueSize int
+	taskQueue     chan func()
+	// Uslice for now, but reconsider data structures for future.
+	holdingQueue []func()
+	penMu        sync.RWMutex
 
-	processingQueueSize int
-	processingCh        chan func()
+	activeQueueSize int
+	activeQueue     chan func()
 
 	// worker specifics
 	maxWorkers  int
@@ -28,7 +43,7 @@ type Tasq struct {
 	stoppedMu   sync.Mutex
 
 	// shutdown specifics
-	terminated         chan struct{}
+	done               chan struct{}
 	workerIdleDuration time.Duration
 }
 
@@ -40,85 +55,105 @@ var _ contract.Pooler = (*Tasq)(nil)
 // Returns the new instances of Tasq
 func New(opts ...Option) *Tasq {
 	t := &Tasq{}
-	t.workerIdleDuration = 3 * time.Second
+	t.workerIdleDuration = workerIdleTimeout
 	for _, opt := range opts {
 		opt(t)
 	}
 	// TODO: Don't make these buffered, use another data structure
 	// to build a backpressure mechanism.
-	t.waitingCh = make(chan func(), t.waitingQueueSize)
-	t.processingCh = make(chan func(), t.processingQueueSize)
+	t.taskQueue = make(chan func(), t.taskQueueSize)
+	t.activeQueue = make(chan func(), t.activeQueueSize)
 	go t.dispatch()
 	return t
 }
 
 // dispatch is the core implementation of the worker pool
 // and is responsible for handling and executing tasks.
-// TODO: This needs a lot of work
 func (t *Tasq) dispatch() {
+	defer close(t.done)
 	workerKiller := time.NewTimer(3 * time.Second)
-	isOversized := false
-	_ = isOversized
+	processedTasks := false
+	var wg sync.WaitGroup
 
-	// TODO: Channel specifics on shutdown etc.
-
-Core:
+core:
 	for {
-
 		// If our slice of tasks is backfilling, there is pressure already on the
 		// channel queues, keep buffering the tasks as talking directly to our other
 		// queues will be blocked at this point. (implement a double ended Q)
-		// TODO: To be accurate here do we need a mutex lock around this, perhaps a
-		// read only lock check? tho the performance implications are not subtle possibly.
-		if t.HasBackPressure() {
-			// TODO: This likely doesn't need the mutex as we are the single goroutine writing
-			// tasks into such queues, there is no race condition here really.
-			t.processHoldingPen()
-			break Core
+		if t.IsOverflowingToHoldingQueue() {
+			t.processHoldingQueue()
+			break core
 		}
-		// The holding pen is empty, go directly to the channels.
+
+		// There is no tasks currently in the queued queue.  We can directly
+		// insert the tasks to the waiting queue or process tasks from the
+		// waiting queue into the processing queue.
 		select {
-		case t1 := <-t.waitingCh:
-			t.processingCh <- t1
-		case t2 := <-t.processingCh:
-			fmt.Println("processing task")
-			_ = t2
+		case inboundTask, ok := <-t.taskQueue:
+			// Attempt to move a task from a waiting state, into a processing one.
+			// If the channel has been closed, cause an exit.
+			if !ok {
+				break core
+			}
+			select {
+			case t.taskQueue <- inboundTask:
+				// Perform a worker check here, we may need to scale the workers
+				// towards maximum configured capacity.
+				if t.currWorkers < t.maxWorkers {
+					t.scaleUp(t.activeQueue, &wg)
+					// only the main goroutine running the tasq instance will be modifying this
+					// internal state, no need to synchronise.
+				}
+				// We have been processing work, there is no need to be scaling down the workers.
+				processedTasks = false
+			}
 		case <-workerKiller.C:
+			// There have been no processed tasks for the entire duration of the idle checking duration
+			// scale down one worker, down to zero.
+			if processedTasks {
+				t.scaleDown(t.activeQueue, &wg)
+			}
 			workerKiller.Reset(3 * time.Second)
-			// TODO: Scale down our workers by -1, something is idle!
 		}
-		break Core
 	}
+	wg.Wait()
 }
 
-// HasBackPressure checks if the queue for holding tasks to be
+// IsOverflowingToHoldingQueue checks if the queue for holding tasks to be
 // processed in future is populated.  If it is, there is no point
 // going directly to the channels, this check is utilised to know
 // if we should push onto the holden pen deque in future.
-func (t *Tasq) HasBackPressure() bool {
+// TODO: RW locking is unnecessary, only tasq routine changes this state.
+func (t *Tasq) IsOverflowingToHoldingQueue() bool {
 	t.penMu.RLock()
 	defer t.penMu.RUnlock()
-	return len(t.holdingPen) > 0
+	return len(t.holdingQueue) > 0
 }
 
-// processHoldingPen is responsible for getting the backfilled tasks
+// processHoldingQueue is responsible for getting the backfilled tasks
 // out of the queue buffer and into the core waiting/processing internal
 // machinery.
-func (t *Tasq) processHoldingPen() {
-
+// nil checks etc?
+func (t *Tasq) processHoldingQueue() {
+	ele := t.holdingQueue[len(t.holdingQueue)-1]
+	t.taskQueue <- ele
 }
 
-// MaxWorkers returns the maximum number of workers.
+func (t *Tasq) processWaitingTask(task Task) {
+	t.activeQueue <- task
+}
+
+// MaximumConfiguredWorkers returns the maximum number of workers.
 // workers can be scaled depending on demand, so while
 // use ActiveWorkers() to get the current actual number
 // of active workers
-func (t *Tasq) MaxWorkers() int {
+func (t *Tasq) MaximumConfiguredWorkers() int {
 	return t.maxWorkers
 }
 
-// ActiveWorkers returns the number of current workers
+// CurrentWorkerCount returns the number of current workers
 // in the pool.
-func (t *Tasq) ActiveWorkers() int {
+func (t *Tasq) CurrentWorkerCount() int {
 	return t.currWorkers
 }
 
@@ -152,40 +187,50 @@ func (t *Tasq) Throttle(ctx context.Context) {
 // be consumed by the pool (at some point in future).  This
 // is not blocking, if you wish to wait until the task has been
 // processed, use EnqueueWait() instead.
-func (t *Tasq) Enqueue(task func()) string {
-	return ""
+func (t *Tasq) Enqueue(task func()) {
+	if task != nil {
+		t.taskQueue <- task
+	}
 }
 
-func (t *Tasq) EnqueueWait(task func()) string {
-	return ""
+// EnqueueWait pushes a new task onto the task queue and wraps the
+// task with a done channel that waits until the task has been processed
+// through all internal queues and been executed.  No return value is handed
+// back to the caller here, the user should wrap their task in a closure that
+// is responsible for writing results onto a channel or some other synchronisation
+// mechanism.
+func (t *Tasq) EnqueueWait(task func()) {
+	if task != nil {
+		done := make(chan struct{})
+		t.taskQueue <- func() {
+			defer close(done)
+			t.Enqueue(task)
+		}
+		<-done
+	}
 }
 
-// ScaleUp adds a new worker into the pool to cope with
-// higher demand.  If workers have set idle for a period
-// of time, A timer/tick check ensues and scales down where
-// appropriate.  Thi is configurable via the WithWorkerCheck(dur)
-// option.
-func (t *Tasq) ScaleUp() {
-
+// scaleUp spawns a new worker in a goroutine ready when handle tasks
+// from the internal processing queue.
+func (t *Tasq) scaleUp(processingQ <-chan func(), wg *sync.WaitGroup) {
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		worker(processingQ)
+	}()
+	t.currWorkers++
 }
 
-// ScaleDown removes an idle worker from the pool, down to
+// scaleDown removes an idle worker from the pool, down to
 // zero (0) workers when the pool is completely unutilised.
 // the cost for worker creation is trivial in the larger
 // scheme of things.
-func (t *Tasq) ScaleDown() {
-
+func (t *Tasq) scaleDown(wg *sync.WaitGroup) {
+	t.currWorkers--
 }
 
-// ----- Worker specifics ----- //
-
-type Worker struct {
-}
-
-func (w *Worker) Run() {
-
-}
-
-func (w *Worker) Terminate() {
+// worker is responsible for processing tasks on the processing
+// channel and exiting gracefully when a shutdown has been triggered.
+func worker(tasks <-chan func()) {
 
 }
