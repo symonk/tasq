@@ -30,6 +30,7 @@ type Tasq struct {
 	incomingQueue chan func()
 	// Uslice for now, but reconsider data structures for future.
 	interimQueue []func()
+	interimMutex sync.Locker
 	penMu        sync.RWMutex
 
 	processingQueue chan func()
@@ -60,20 +61,19 @@ func New(opts ...Option) *Tasq {
 	for _, opt := range opts {
 		opt(t)
 	}
-	// TODO: Don't make these buffered, use another data structure
-	// to build a backpressure mechanism.
 	t.incomingQueue = make(chan func())
 	t.processingQueue = make(chan func())
-	go t.dispatch()
+	go t.begin()
 	return t
 }
 
-// dispatch is the core implementation of the worker pool
+// begin is the core implementation of the worker pool
 // and is responsible for handling and executing tasks.
-func (t *Tasq) dispatch() {
+func (t *Tasq) begin() {
 	defer close(t.done)
-	workerKiller := time.NewTimer(3 * time.Second)
-	processedTasks := false
+	workerIdleDuration := time.NewTimer(3 * time.Second)
+	work := make(chan func())
+	completedTasks := false
 	var wg sync.WaitGroup
 
 core:
@@ -81,9 +81,14 @@ core:
 		// If our slice of tasks is backfilling, there is pressure already on the
 		// channel queues, keep buffering the tasks as talking directly to our other
 		// queues will be blocked at this point. (implement a double ended Q)
+		// There MUST be workers at this point as this queue cannot grow until the
+		// processing queue has had a task and subsequently caused a worker to be spawned.
 		if t.IsOverflowingToHoldingQueue() {
-			t.processHoldingQueue()
-			break core
+			if !t.processHoldingQueue() {
+				break core
+			}
+			// we processed a task successfully, try again.
+			continue
 		}
 
 		// There is currently no tasks in the interim queue backing up, we can safely
@@ -91,35 +96,42 @@ core:
 		// processing queue.
 		select {
 		case inboundTask, ok := <-t.incomingQueue:
-			// Attempt to move a task from a waiting state, into a processing one.
-			// If the channel has been closed, cause an exit.
+			// There is a a task, some scenarios can exist now:
+			// 1. Attempt to directly move the task onto the processing queue if it will accept it.
+			// 2. Store the task in the interim queue if the processing queue is blocking.
+			// 3. We have a task on the processing queue, do worker checks and hand the task off to the workers.
+			// 4. We are in a shutting down state, so need to terminate.
 			if !ok {
+				// Stop() has been invoked, gracefully exit
+				// TODO: implement this.
 				break core
 			}
-			select {
-			case t.processingQueue <- inboundTask:
-				// We have directly put a task on the processing queue.
-				// Perform a worker check here, we may need to scale the workers
-				// towards maximum configured capacity.
-				if t.currWorkers < t.maxWorkers {
-					t.scaleUp(inboundTask, t.processingQueue, &wg)
-					// only the main goroutine running the tasq instance will be modifying this
-					// internal state, no need to synchronise.
-				}
-				// We have been processing work, there is no need to be scaling down the workers.
-				processedTasks = false
-			}
 
-		case <-workerKiller.C:
+			select {
+			case processableTask := <-t.processingQueue:
+				// 3, a task needs processed, but first we need to do various different worker checks
+				// such as scaling etc.  We also can update the idle checks here as we will of carried
+				// out a task in the timer window.
+				completedTasks = true
+				if t.currWorkers < t.maxWorkers {
+					t.startNewWorker(inboundTask, work, &wg)
+				}
+				work <- processableTask
+			// 1, the processing queue is ready to accept a task, go directly there.
+			case t.processingQueue <- inboundTask:
+			}
+		case <-workerIdleDuration.C:
 			// There have been no processed tasks for the entire duration of the idle checking duration
 			// scale down one worker, down to zero.
-			if processedTasks && t.currWorkers > 0 {
-				t.scaleDown(&wg)
+			if completedTasks && t.currWorkers > 0 {
+				t.stopWorker(&wg)
 			}
-			workerKiller.Reset(3 * time.Second)
-			processedTasks = true
+			workerIdleDuration.Reset(3 * time.Second)
+			completedTasks = false
 		}
 	}
+	// teardown support
+	// TODO: Implement this logic, be cautious of shutting down etc.
 	wg.Wait()
 }
 
@@ -135,12 +147,19 @@ func (t *Tasq) IsOverflowingToHoldingQueue() bool {
 }
 
 // processHoldingQueue is responsible for getting the backfilled tasks
-// out of the queue buffer and into the core waiting/processing internal
-// machinery.
-// nil checks etc?
-func (t *Tasq) processHoldingQueue() {
+// out of the interim queue and onto the processing queue.  This attempts
+// to move one task forward.
+func (t *Tasq) processHoldingQueue() bool {
+	// Lock around the critical section only
+	t.interimMutex.Lock()
 	ele := t.interimQueue[len(t.interimQueue)-1]
+	t.interimMutex.Unlock()
+
+	if ele == nil {
+		return false
+	}
 	t.incomingQueue <- ele
+	return true
 }
 
 func (t *Tasq) processWaitingTask(task Task) {
@@ -219,9 +238,9 @@ func (t *Tasq) EnqueueWait(task func()) {
 	}
 }
 
-// scaleUp spawns a new worker in a goroutine ready when handle tasks
+// startNewWorker spawns a new worker in a goroutine ready when handle tasks
 // from the internal processing queue.
-func (t *Tasq) scaleUp(task func(), processingQ <-chan func(), wg *sync.WaitGroup) {
+func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -230,11 +249,11 @@ func (t *Tasq) scaleUp(task func(), processingQ <-chan func(), wg *sync.WaitGrou
 	t.currWorkers++
 }
 
-// scaleDown removes an idle worker from the pool, down to
+// stopWorker removes an idle worker from the pool, down to
 // zero (0) workers when the pool is completely unutilised.
 // the cost for worker creation is trivial in the larger
 // scheme of things.
-func (t *Tasq) scaleDown(wg *sync.WaitGroup) {
+func (t *Tasq) stopWorker(wg *sync.WaitGroup) {
 	t.processingQueue <- nil
 	t.currWorkers--
 }
@@ -245,10 +264,10 @@ func (t *Tasq) scaleDown(wg *sync.WaitGroup) {
 // a nil task is sent to a worker in order to get them to terminate/shutdown.
 // user defined enqueuing does not allow nil tasks, this is special behaviour
 // internally.
-func worker(task func(), activeQ <-chan func(), wg *sync.WaitGroup) {
+func worker(task func(), workerQueue <-chan func(), wg *sync.WaitGroup) {
 	defer wg.Done()
 	for task != nil {
 		task()
-		task = <-activeQ
+		task = <-workerQueue
 	}
 }
