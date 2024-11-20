@@ -35,14 +35,17 @@ type Tasq struct {
 	processingQueue chan func()
 
 	// worker specifics
-	maxWorkers  int
-	currWorkers int
-	stopped     bool
-	stoppedMu   sync.Mutex
+	maxWorkers    int
+	currWorkers   int
+	stopped       bool
+	stoppingMutex sync.Mutex
 
 	// shutdown specifics
 	done               chan struct{}
 	workerIdleDuration time.Duration
+
+	terminate      sync.Once
+	isShuttingDown bool
 }
 
 // Ensure Tasq implements Pooler
@@ -160,9 +163,14 @@ func (t *Tasq) CurrentWorkerCount() int {
 // When the pool is in a stopped state no work tasks will be
 // enqueued.
 func (t *Tasq) Stop() {
-	t.stoppedMu.Lock()
-	defer t.stoppedMu.Unlock()
-	t.stopped = true
+	t.stoppingMutex.Lock()
+	defer t.stoppingMutex.Unlock()
+	t.terminate.Do(func() {
+		t.isShuttingDown = true
+
+		close(t.incomingQueue)
+		close(t.processingQueue)
+	})
 }
 
 // Drain prevents new tasks being enqueued and performs
