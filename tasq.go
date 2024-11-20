@@ -146,9 +146,9 @@ func (t *Tasq) IsOverflowingToHoldingQueue() bool {
 	return len(t.interimQueue) > 0
 }
 
-// processHoldingQueue is responsible for getting the backfilled tasks
-// out of the interim queue and onto the processing queue.  This attempts
-// to move one task forward.
+// processHoldingQueue causes the pool to process tasks that in
+// in the interim queue to workers and subsequently adding new incoming
+// tasks
 func (t *Tasq) processHoldingQueue() bool {
 	// Lock around the critical section only
 	t.interimMutex.Lock()

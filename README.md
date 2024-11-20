@@ -36,7 +36,7 @@ error handling scenarios where upstream dependencies may be non functional.
 package main
 
 import (
-    "github.com/symonk/tasq
+    "github.com/symonk/tasq"
 
     "time"
 )
