@@ -13,21 +13,9 @@ func WithMaxWorkers(max int) Option {
 	}
 }
 
-// WithWaitingQueueSize configures the total buffer for
-// tasks that can be stored in the 'waiting' queue.  The
-// waiting queue is tasks waiting to be picked up by a worker
-func WithWaitingQueueSize(size int) Option {
-	return func(t *Tasq) {
-		t.taskQueueSize = size
-	}
-}
-
-func WithActiveQueueSize(size int) Option {
-	return func(t *Tasq) {
-		t.activeQueueSize = size
-	}
-}
-
+// WithWorkerCheckDuration allows configuration of the window (duration)
+// where workers are automatically scaled down due to inactivity.  Workers
+// can be scaled down to zero.
 func WithWorkerCheckDuration(dur time.Duration) Option {
 	return func(t *Tasq) {
 		t.workerIdleDuration = dur

@@ -27,14 +27,12 @@ const (
 type Tasq struct {
 
 	// queue specifics
-	taskQueueSize int
-	taskQueue     chan func()
+	incomingQueue chan func()
 	// Uslice for now, but reconsider data structures for future.
-	holdingQueue []func()
+	interimQueue []func()
 	penMu        sync.RWMutex
 
-	activeQueueSize int
-	activeQueue     chan func()
+	processingQueue chan func()
 
 	// worker specifics
 	maxWorkers  int
@@ -61,8 +59,8 @@ func New(opts ...Option) *Tasq {
 	}
 	// TODO: Don't make these buffered, use another data structure
 	// to build a backpressure mechanism.
-	t.taskQueue = make(chan func(), t.taskQueueSize)
-	t.activeQueue = make(chan func(), t.activeQueueSize)
+	t.incomingQueue = make(chan func())
+	t.processingQueue = make(chan func())
 	go t.dispatch()
 	return t
 }
@@ -89,18 +87,18 @@ core:
 		// insert the tasks to the waiting queue or process tasks from the
 		// waiting queue into the processing queue.
 		select {
-		case inboundTask, ok := <-t.taskQueue:
+		case inboundTask, ok := <-t.incomingQueue:
 			// Attempt to move a task from a waiting state, into a processing one.
 			// If the channel has been closed, cause an exit.
 			if !ok {
 				break core
 			}
 			select {
-			case t.taskQueue <- inboundTask:
+			case t.incomingQueue <- inboundTask:
 				// Perform a worker check here, we may need to scale the workers
 				// towards maximum configured capacity.
 				if t.currWorkers < t.maxWorkers {
-					t.scaleUp(inboundTask, t.activeQueue, &wg)
+					t.scaleUp(inboundTask, t.processingQueue, &wg)
 					// only the main goroutine running the tasq instance will be modifying this
 					// internal state, no need to synchronise.
 				}
@@ -128,7 +126,7 @@ core:
 func (t *Tasq) IsOverflowingToHoldingQueue() bool {
 	t.penMu.RLock()
 	defer t.penMu.RUnlock()
-	return len(t.holdingQueue) > 0
+	return len(t.interimQueue) > 0
 }
 
 // processHoldingQueue is responsible for getting the backfilled tasks
@@ -136,12 +134,12 @@ func (t *Tasq) IsOverflowingToHoldingQueue() bool {
 // machinery.
 // nil checks etc?
 func (t *Tasq) processHoldingQueue() {
-	ele := t.holdingQueue[len(t.holdingQueue)-1]
-	t.taskQueue <- ele
+	ele := t.interimQueue[len(t.interimQueue)-1]
+	t.incomingQueue <- ele
 }
 
 func (t *Tasq) processWaitingTask(task Task) {
-	t.activeQueue <- task
+	t.processingQueue <- task
 }
 
 // MaximumConfiguredWorkers returns the maximum number of workers.
@@ -190,7 +188,7 @@ func (t *Tasq) Throttle(ctx context.Context) {
 // processed, use EnqueueWait() instead.
 func (t *Tasq) Enqueue(task func()) {
 	if task != nil {
-		t.taskQueue <- task
+		t.incomingQueue <- task
 	}
 }
 
@@ -203,7 +201,7 @@ func (t *Tasq) Enqueue(task func()) {
 func (t *Tasq) EnqueueWait(task func()) {
 	if task != nil {
 		done := make(chan struct{})
-		t.taskQueue <- func() {
+		t.incomingQueue <- func() {
 			defer close(done)
 			t.Enqueue(task)
 		}
@@ -227,7 +225,7 @@ func (t *Tasq) scaleUp(task func(), processingQ <-chan func(), wg *sync.WaitGrou
 // the cost for worker creation is trivial in the larger
 // scheme of things.
 func (t *Tasq) scaleDown(wg *sync.WaitGroup) {
-	t.activeQueue <- nil
+	t.processingQueue <- nil
 	t.currWorkers--
 }
 
