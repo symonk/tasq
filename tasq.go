@@ -100,7 +100,7 @@ core:
 				// Perform a worker check here, we may need to scale the workers
 				// towards maximum configured capacity.
 				if t.currWorkers < t.maxWorkers {
-					t.scaleUp(t.activeQueue, &wg)
+					t.scaleUp(inboundTask, t.activeQueue, &wg)
 					// only the main goroutine running the tasq instance will be modifying this
 					// internal state, no need to synchronise.
 				}
@@ -110,10 +110,11 @@ core:
 		case <-workerKiller.C:
 			// There have been no processed tasks for the entire duration of the idle checking duration
 			// scale down one worker, down to zero.
-			if processedTasks {
-				t.scaleDown(t.activeQueue, &wg)
+			if processedTasks && t.currWorkers > 0 {
+				t.scaleDown(&wg)
 			}
 			workerKiller.Reset(3 * time.Second)
+			processedTasks = true
 		}
 	}
 	wg.Wait()
@@ -212,11 +213,11 @@ func (t *Tasq) EnqueueWait(task func()) {
 
 // scaleUp spawns a new worker in a goroutine ready when handle tasks
 // from the internal processing queue.
-func (t *Tasq) scaleUp(processingQ <-chan func(), wg *sync.WaitGroup) {
+func (t *Tasq) scaleUp(task func(), processingQ <-chan func(), wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		worker(processingQ)
+		worker(task, processingQ, wg)
 	}()
 	t.currWorkers++
 }
@@ -226,11 +227,20 @@ func (t *Tasq) scaleUp(processingQ <-chan func(), wg *sync.WaitGroup) {
 // the cost for worker creation is trivial in the larger
 // scheme of things.
 func (t *Tasq) scaleDown(wg *sync.WaitGroup) {
+	t.activeQueue <- nil
 	t.currWorkers--
 }
 
 // worker is responsible for processing tasks on the processing
 // channel and exiting gracefully when a shutdown has been triggered.
-func worker(tasks <-chan func()) {
-
+// sending a nil task to a worker causes the worker to exit.
+// a nil task is sent to a worker in order to get them to terminate/shutdown.
+// user defined enqueuing does not allow nil tasks, this is special behaviour
+// internally.
+func worker(task func(), activeQ <-chan func(), wg *sync.WaitGroup) {
+	defer wg.Done()
+	for task != nil {
+		task()
+		task = <-activeQ
+	}
 }
