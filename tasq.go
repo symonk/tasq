@@ -2,7 +2,6 @@ package tasq
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"time"
 
@@ -106,8 +105,8 @@ core:
 			}
 			select {
 			case t.processingQueue <- inboundTask:
-				fmt.Println("submitted a task directly for processing!")
-			case executableTask := <-t.processingQueue:
+				//
+			default:
 				// 3, a task needs processed, but first we need to do various different worker checks
 				// such as scaling etc.  We also can update the idle checks here as we will of carried
 				// out a task in the timer window.
@@ -115,7 +114,7 @@ core:
 				if t.currWorkers < t.maxWorkers {
 					t.startNewWorker(inboundTask, work, &wg)
 				}
-				work <- executableTask
+				work <- inboundTask
 			}
 		case <-workerIdleDuration.C:
 			// There have been no processed tasks for the entire duration of the idle checking duration
@@ -184,7 +183,6 @@ func (t *Tasq) Stop() {
 
 	t.terminate.Do(func() {
 		close(t.submittedQueue)
-		close(t.processingQueue)
 		<-t.done
 	})
 }
