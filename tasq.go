@@ -2,6 +2,7 @@ package tasq
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"time"
 
@@ -27,12 +28,10 @@ const (
 type Tasq struct {
 
 	// queue specifics
-	incomingQueue chan func()
+	submittedQueue chan func()
 	// Uslice for now, but reconsider data structures for future.
-	interimQueue []func()
-	interimMutex sync.Locker
-	penMu        sync.RWMutex
-
+	interimQueue    []func()
+	interimMutex    sync.Locker
 	processingQueue chan func()
 
 	// worker specifics
@@ -45,8 +44,7 @@ type Tasq struct {
 	done               chan struct{}
 	workerIdleDuration time.Duration
 
-	terminate      sync.Once
-	isShuttingDown bool
+	terminate sync.Once
 }
 
 // Ensure Tasq implements Pooler
@@ -61,7 +59,7 @@ func New(opts ...Option) *Tasq {
 	for _, opt := range opts {
 		opt(t)
 	}
-	t.incomingQueue = make(chan func())
+	t.submittedQueue = make(chan func())
 	t.processingQueue = make(chan func())
 	go t.begin()
 	return t
@@ -83,7 +81,7 @@ core:
 		// queues will be blocked at this point. (implement a double ended Q)
 		// There MUST be workers at this point as this queue cannot grow until the
 		// processing queue has had a task and subsequently caused a worker to be spawned.
-		if t.IsOverflowingToHoldingQueue() {
+		if t.checkForBackPressure() {
 			if !t.processHoldingQueue() {
 				break core
 			}
@@ -95,7 +93,7 @@ core:
 		// look to read one from the incoming queue and slot it directly onto our
 		// processing queue.
 		select {
-		case inboundTask, ok := <-t.incomingQueue:
+		case inboundTask, ok := <-t.submittedQueue:
 			// There is a a task, some scenarios can exist now:
 			// 1. Attempt to directly move the task onto the processing queue if it will accept it.
 			// 2. Store the task in the interim queue if the processing queue is blocking.
@@ -106,9 +104,10 @@ core:
 				// TODO: implement this.
 				break core
 			}
-
 			select {
-			case processableTask := <-t.processingQueue:
+			case t.processingQueue <- inboundTask:
+				fmt.Println("submitted a task directly for processing!")
+			case executableTask := <-t.processingQueue:
 				// 3, a task needs processed, but first we need to do various different worker checks
 				// such as scaling etc.  We also can update the idle checks here as we will of carried
 				// out a task in the timer window.
@@ -116,15 +115,13 @@ core:
 				if t.currWorkers < t.maxWorkers {
 					t.startNewWorker(inboundTask, work, &wg)
 				}
-				work <- processableTask
-			// 1, the processing queue is ready to accept a task, go directly there.
-			case t.processingQueue <- inboundTask:
+				work <- executableTask
 			}
 		case <-workerIdleDuration.C:
 			// There have been no processed tasks for the entire duration of the idle checking duration
 			// scale down one worker, down to zero.
 			if completedTasks && t.currWorkers > 0 {
-				t.stopWorker(&wg)
+				t.stopWorker()
 			}
 			workerIdleDuration.Reset(3 * time.Second)
 			completedTasks = false
@@ -135,14 +132,11 @@ core:
 	wg.Wait()
 }
 
-// IsOverflowingToHoldingQueue checks if the queue for holding tasks to be
+// checkForBackPressure checks if the queue for holding tasks to be
 // processed in future is populated.  If it is, there is no point
 // going directly to the channels, this check is utilised to know
 // if we should push onto the holden pen deque in future.
-// TODO: RW locking is unnecessary, only tasq routine changes this state.
-func (t *Tasq) IsOverflowingToHoldingQueue() bool {
-	t.penMu.RLock()
-	defer t.penMu.RUnlock()
+func (t *Tasq) checkForBackPressure() bool {
 	return len(t.interimQueue) > 0
 }
 
@@ -158,7 +152,7 @@ func (t *Tasq) processHoldingQueue() bool {
 	if ele == nil {
 		return false
 	}
-	t.incomingQueue <- ele
+	t.submittedQueue <- ele
 	return true
 }
 
@@ -185,12 +179,13 @@ func (t *Tasq) CurrentWorkerCount() int {
 // enqueued.
 func (t *Tasq) Stop() {
 	t.stoppingMutex.Lock()
-	defer t.stoppingMutex.Unlock()
-	t.terminate.Do(func() {
-		t.isShuttingDown = true
+	t.stopped = true
+	t.stoppingMutex.Unlock()
 
-		close(t.incomingQueue)
+	t.terminate.Do(func() {
+		close(t.submittedQueue)
 		close(t.processingQueue)
+		<-t.done
 	})
 }
 
@@ -211,28 +206,28 @@ func (t *Tasq) Throttle(ctx context.Context) {
 
 }
 
-// Enqueue is responsible for preparing a user defined task to
+// Submit is responsible for preparing a user defined task to
 // be consumed by the pool (at some point in future).  This
 // is not blocking, if you wish to wait until the task has been
 // processed, use EnqueueWait() instead.
-func (t *Tasq) Enqueue(task func()) {
-	if task != nil {
-		t.incomingQueue <- task
+func (t *Tasq) Submit(task func()) {
+	if task != nil && !t.stopped {
+		t.submittedQueue <- task
 	}
 }
 
-// EnqueueWait pushes a new task onto the task queue and wraps the
+// SubmitWait pushes a new task onto the task queue and wraps the
 // task with a done channel that waits until the task has been processed
 // through all internal queues and been executed.  No return value is handed
 // back to the caller here, the user should wrap their task in a closure that
 // is responsible for writing results onto a channel or some other synchronisation
 // mechanism.
-func (t *Tasq) EnqueueWait(task func()) {
-	if task != nil {
+func (t *Tasq) SubmitWait(task func()) {
+	if task != nil && !t.stopped {
 		done := make(chan struct{})
-		t.incomingQueue <- func() {
+		t.submittedQueue <- func() {
 			defer close(done)
-			t.Enqueue(task)
+			t.Submit(task)
 		}
 		<-done
 	}
@@ -253,7 +248,7 @@ func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.W
 // zero (0) workers when the pool is completely unutilised.
 // the cost for worker creation is trivial in the larger
 // scheme of things.
-func (t *Tasq) stopWorker(wg *sync.WaitGroup) {
+func (t *Tasq) stopWorker() {
 	t.processingQueue <- nil
 	t.currWorkers--
 }
