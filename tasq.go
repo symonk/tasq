@@ -189,6 +189,14 @@ func (t *Tasq) Stop() {
 	})
 }
 
+// Stopped returns the stopped state of the Tasq instance.
+// This function is synchronised.
+func (t *Tasq) Stopped() bool {
+	t.stoppingMutex.Lock()
+	defer t.stoppingMutex.Unlock()
+	return t.stopped
+}
+
 // Drain prevents new tasks being enqueued and performs
 // a graceful shutdown of the worker pool after all tasks
 // in flight have been processed.
