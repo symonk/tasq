@@ -43,7 +43,7 @@ type Tasq struct {
 	done               chan struct{}
 	workerIdleDuration time.Duration
 
-	terminate sync.Once
+	once sync.Once
 }
 
 // Ensure Tasq implements Pooler
@@ -177,7 +177,7 @@ func (t *Tasq) CurrentWorkerCount() int {
 // When the pool is in a stopped state no work tasks will be
 // enqueued.
 func (t *Tasq) Stop() {
-	t.terminate.Do(func() {
+	t.once.Do(func() {
 		t.stoppingMutex.Lock()
 		t.stopped = true
 		t.stoppingMutex.Unlock()
