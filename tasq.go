@@ -177,11 +177,10 @@ func (t *Tasq) CurrentWorkerCount() int {
 // When the pool is in a stopped state no work tasks will be
 // enqueued.
 func (t *Tasq) Stop() {
-	t.stoppingMutex.Lock()
-	t.stopped = true
-	t.stoppingMutex.Unlock()
-
 	t.terminate.Do(func() {
+		t.stoppingMutex.Lock()
+		t.stopped = true
+		t.stoppingMutex.Unlock()
 		close(t.submittedQueue)
 		<-t.done
 	})
