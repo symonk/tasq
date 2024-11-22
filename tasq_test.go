@@ -14,8 +14,9 @@ func TestMaximumWorkersIsCorrect(t *testing.T) {
 }
 
 func TestProofOfConcept(t *testing.T) {
-	p := New(WithMaxWorkers(1))
+	p := New(WithMaxWorkers(1), WithWorkerCheckDuration(time.Minute))
 	p.SubmitWait(func() {
 		time.Sleep(time.Second * 5)
 	})
+	p.Stop()
 }

@@ -30,7 +30,8 @@ type Tasq struct {
 	submittedQueue chan func()
 	// Uslice for now, but reconsider data structures for future.
 	interimQueue    []func()
-	interimMutex    sync.Locker
+	interimCap      int
+	interimMutex    sync.Mutex
 	processingQueue chan func()
 
 	// worker specifics
@@ -59,7 +60,9 @@ func New(opts ...Option) *Tasq {
 		opt(t)
 	}
 	t.submittedQueue = make(chan func())
+	t.interimQueue = make([]func(), 0)
 	t.processingQueue = make(chan func())
+	t.done = make(chan struct{})
 	go t.begin()
 	return t
 }
@@ -80,7 +83,7 @@ core:
 		// There MUST be workers at this point as this queue cannot grow until the
 		// processing queue has had a task and subsequently caused a worker to be spawned.
 		if t.checkForBackPressure() {
-			if !t.processHoldingQueue() {
+			if !t.processInterimQueueTask() {
 				break core
 			}
 			// we processed a task successfully, try again.
@@ -92,25 +95,29 @@ core:
 		// processing queue.
 		select {
 		case inboundTask, ok := <-t.submittedQueue:
-			// There is a a task, some scenarios can exist now:
-			// 1. Attempt to directly move the task onto the processing queue if it will accept it.
-			// 2. Store the task in the interim queue if the processing queue is blocking.
-			// 3. We have a task on the processing queue, do worker checks and hand the task off to the workers.
-			// 4. We are in a shutting down state, so need to terminate.
 			if !ok {
-				// Stop() has been invoked, gracefully exit
-				// TODO: implement this.
+				// Stop() has been invoked at some point, the submitted channel has been closed,
+				// get out and wait for workers to be finalized, nil tasks are distributed to all
+				// of them.
 				break core
 			}
 			select {
 			// Queue the task directly to workers if not blocking
 			case t.processingQueue <- inboundTask:
-				//
 			default:
 				// Push the task onto the interim queue ready for processing in future.
+				// the processing queue is not able to accept tasks at the moment.
 				if t.currWorkers < t.maxWorkers {
 					t.startNewWorker(inboundTask, t.processingQueue, &wg)
 				}
+				// Push the task onto the front of the interim queue
+				// For now, we are using a slice here, to be changed out
+				// in future.
+				// TODO: This SUCKS right now, improve the data structure and performance/locking.
+				t.interimMutex.Lock()
+				t.interimQueue = append([]func(){inboundTask}, t.interimQueue...)
+				t.interimMutex.Unlock()
+
 			}
 			completedTasks = true
 		case <-workerIdleDuration.C:
@@ -123,8 +130,8 @@ core:
 			completedTasks = false
 		}
 	}
-	// teardown support
-	// TODO: Implement this logic, be cautious of shutting down etc.
+
+	// Graceful teardown, wait for all workers to finalize
 	wg.Wait()
 	workerIdleDuration.Stop()
 }
@@ -137,24 +144,28 @@ func (t *Tasq) checkForBackPressure() bool {
 	return len(t.interimQueue) > 0
 }
 
-// processHoldingQueue causes the pool to process tasks that in
-// in the interim queue to workers and subsequently adding new incoming
-// tasks
-func (t *Tasq) processHoldingQueue() bool {
-	// Lock around the critical section only
+// interimQueueSize returns the total number of tasks in the interim
+// queue.
+func (t *Tasq) interimQueueSize() int {
 	t.interimMutex.Lock()
-	ele := t.interimQueue[len(t.interimQueue)-1]
-	t.interimMutex.Unlock()
-
-	if ele == nil {
-		return false
-	}
-	t.submittedQueue <- ele
-	return true
+	defer t.interimMutex.Unlock()
+	return len(t.interimQueue)
 }
 
-func (t *Tasq) processWaitingTask(task Task) {
-	t.processingQueue <- task
+// processInterimQueueTask attempts to take the latest tasks in the interim queue
+// and move it into the processing queue.
+func (t *Tasq) processInterimQueueTask() bool {
+	// Lock around the critical section only
+	oldestTask := t.interimQueue[t.interimQueueSize()-1]
+	if oldestTask == nil {
+		return false
+	}
+	select {
+	case t.processingQueue <- oldestTask:
+		return true
+	default:
+		return false
+	}
 }
 
 // MaximumConfiguredWorkers returns the maximum number of workers.
