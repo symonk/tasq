@@ -136,6 +136,9 @@ core:
 	wg.Wait()
 	workerIdleDuration.Stop()
 	t.Drain()
+	for t.currWorkers > 0 {
+		t.processingQueue <- nil
+	}
 }
 
 // checkForBackPressure checks if the queue for holding tasks to be
