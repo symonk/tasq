@@ -103,6 +103,7 @@ core:
 			}
 			select {
 			// Queue the task directly to workers if not blocking
+			// if no workers have been spawned, this won't be selected.
 			case t.processingQueue <- inboundTask:
 			default:
 				// Push the task onto the interim queue ready for processing in future.
@@ -134,6 +135,7 @@ core:
 	// Graceful teardown, wait for all workers to finalize
 	wg.Wait()
 	workerIdleDuration.Stop()
+	t.Drain()
 }
 
 // checkForBackPressure checks if the queue for holding tasks to be
