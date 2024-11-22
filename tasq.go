@@ -69,7 +69,6 @@ func New(opts ...Option) *Tasq {
 func (t *Tasq) begin() {
 	defer close(t.done)
 	workerIdleDuration := time.NewTimer(3 * time.Second)
-	work := make(chan func())
 	completedTasks := false
 	var wg sync.WaitGroup
 
@@ -104,18 +103,16 @@ core:
 				break core
 			}
 			select {
+			// Queue the task directly to workers if not blocking
 			case t.processingQueue <- inboundTask:
 				//
 			default:
-				// 3, a task needs processed, but first we need to do various different worker checks
-				// such as scaling etc.  We also can update the idle checks here as we will of carried
-				// out a task in the timer window.
-				completedTasks = true
+				// Push the task onto the interim queue ready for processing in future.
 				if t.currWorkers < t.maxWorkers {
-					t.startNewWorker(inboundTask, work, &wg)
+					t.startNewWorker(inboundTask, t.processingQueue, &wg)
 				}
-				work <- inboundTask
 			}
+			completedTasks = true
 		case <-workerIdleDuration.C:
 			// There have been no processed tasks for the entire duration of the idle checking duration
 			// scale down one worker, down to zero.
@@ -129,6 +126,7 @@ core:
 	// teardown support
 	// TODO: Implement this logic, be cautious of shutting down etc.
 	wg.Wait()
+	workerIdleDuration.Stop()
 }
 
 // checkForBackPressure checks if the queue for holding tasks to be
@@ -253,9 +251,13 @@ func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.W
 // zero (0) workers when the pool is completely unutilised.
 // the cost for worker creation is trivial in the larger
 // scheme of things.
-func (t *Tasq) stopWorker() {
-	t.processingQueue <- nil
-	t.currWorkers--
+func (t *Tasq) stopWorker() bool {
+	select {
+	case t.processingQueue <- nil:
+		return true
+	default:
+		return false
+	}
 }
 
 // worker is responsible for processing tasks on the processing
