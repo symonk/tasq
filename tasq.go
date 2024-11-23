@@ -2,8 +2,8 @@ package tasq
 
 import (
 	"context"
+	"fmt"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/symonk/tasq/internal/contract"
@@ -45,6 +45,7 @@ type Tasq struct {
 	// shutdown specifics
 	done               chan struct{}
 	graceful           bool
+	exitSignal         chan struct{}
 	workerIdleDuration time.Duration
 
 	once sync.Once
@@ -80,11 +81,8 @@ func (t *Tasq) begin() {
 
 core:
 	for {
-		// If our slice of tasks is backfilling, there is pressure already on the
-		// channel queues, keep buffering the tasks as talking directly to our other
-		// queues will be blocked at this point. (implement a double ended Q)
-		// There MUST be workers at this point as this queue cannot grow until the
-		// processing queue has had a task and subsequently caused a worker to be spawned.
+		// The internal interim queue is growing, move a task from there into
+		// the processing queue if possible.
 		if t.interimQueueSize() > 0 {
 			if !t.processInterimQueueTask() {
 				break core
@@ -120,7 +118,6 @@ core:
 				// TODO: This SUCKS right now, improve the data structure and performance/locking.
 				t.interimMutex.Lock()
 				t.interimQueue = append([]func(){inboundTask}, t.interimQueue...)
-				atomic.AddInt64(&t.queued, 1)
 				t.interimMutex.Unlock()
 
 			}
@@ -149,24 +146,25 @@ core:
 // interimQueueSize returns the total number of tasks in the interim
 // queue.
 func (t *Tasq) interimQueueSize() int {
-	return int(atomic.LoadInt64(&t.queued))
+	t.interimMutex.Lock()
+	defer t.interimMutex.Unlock()
+	return len(t.interimQueue)
 }
 
 // processInterimQueueTask attempts to take the latest tasks in the interim queue
 // and move it into the processing queue.
+// if the task was directly put onto the processing queue returns true, otherwise
+// returns false.
 func (t *Tasq) processInterimQueueTask() bool {
 	// Lock around the critical section only
 	oldestTask := t.interimQueue[t.interimQueueSize()-1]
-	if oldestTask == nil {
-		return false
-	}
 	select {
+	case <-t.exitSignal:
+		return false
 	case t.processingQueue <- oldestTask:
-		t.queued--
 		return true
 	default:
-		t.queued--
-		return false
+		return true
 	}
 }
 
@@ -272,6 +270,7 @@ func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.W
 		defer wg.Done()
 		worker(task, processingQ, wg)
 	}()
+	fmt.Println("started a worker...")
 	t.currWorkers++
 }
 
@@ -298,6 +297,7 @@ func worker(task func(), workerQueue <-chan func(), wg *sync.WaitGroup) {
 	defer wg.Done()
 	for task != nil {
 		task()
+		fmt.Println("worked ran a task...")
 		task = <-workerQueue
 	}
 }
