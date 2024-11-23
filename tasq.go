@@ -42,6 +42,7 @@ type Tasq struct {
 
 	// shutdown specifics
 	done               chan struct{}
+	graceful           bool
 	workerIdleDuration time.Duration
 
 	once sync.Once
@@ -73,7 +74,7 @@ func (t *Tasq) begin() {
 	defer close(t.done)
 	workerIdleDuration := time.NewTimer(3 * time.Second)
 	completedTasks := false
-	var wg sync.WaitGroup
+	var workersRunning sync.WaitGroup
 
 core:
 	for {
@@ -109,7 +110,7 @@ core:
 				// Push the task onto the interim queue ready for processing in future.
 				// the processing queue is not able to accept tasks at the moment.
 				if t.currWorkers < t.maxWorkers {
-					t.startNewWorker(inboundTask, t.processingQueue, &wg)
+					t.startNewWorker(inboundTask, t.processingQueue, &workersRunning)
 				}
 				// Push the task onto the front of the interim queue
 				// For now, we are using a slice here, to be changed out
@@ -133,12 +134,12 @@ core:
 	}
 
 	// Graceful teardown, wait for all workers to finalize
-	wg.Wait()
 	workerIdleDuration.Stop()
-	t.Drain()
-	for t.currWorkers > 0 {
-		t.processingQueue <- nil
+	if t.graceful {
+		// send nil tasks until all workers have been stopped
+		t.Drain()
 	}
+	workersRunning.Wait()
 }
 
 // checkForBackPressure checks if the queue for holding tasks to be
@@ -187,16 +188,28 @@ func (t *Tasq) CurrentWorkerCount() int {
 	return t.currWorkers
 }
 
-// Stop drains all tasks in the queue and terminates the pool.
-// When the pool is in a stopped state no work tasks will be
-// enqueued.
+// Stop performs a graceful shutdown of the pool, preventing any
+// new tasks from being enqueued but waiting until all queued tasks
+// have been executed to completion.
 func (t *Tasq) Stop() {
+	t.terminate(true)
+}
+
+// Abort immediately, abort queued tasks and exit.
+func (t *Tasq) Abort() {
+	t.terminate(false)
+}
+
+// terminate shuts down the Tasq instance.  Depending on various
+// states, the shutdown can be graceful (wait for queued tasks to
+// be processed) or immediate (stop all workers and discard tasks).
+func (t *Tasq) terminate(graceful bool) {
 	t.once.Do(func() {
 		t.stoppingMutex.Lock()
 		t.stopped = true
+		t.graceful = graceful
 		t.stoppingMutex.Unlock()
 		close(t.submittedQueue)
-		<-t.done
 	})
 }
 
@@ -212,6 +225,9 @@ func (t *Tasq) Stopped() bool {
 // a graceful shutdown of the worker pool after all tasks
 // in flight have been processed.
 func (t *Tasq) Drain() {
+	for t.currWorkers > 0 {
+		t.processingQueue <- nil
+	}
 }
 
 // Throttle causes blocking across the workers until
