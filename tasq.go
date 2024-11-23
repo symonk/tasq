@@ -127,6 +127,7 @@ core:
 			// scale down one worker, down to zero.
 			if completedTasks && t.currWorkers > 0 {
 				t.stopWorker()
+				t.currWorkers--
 			}
 			workerIdleDuration.Reset(3 * time.Second)
 			completedTasks = false
