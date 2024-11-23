@@ -3,6 +3,7 @@ package tasq
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/symonk/tasq/internal/contract"
@@ -33,6 +34,7 @@ type Tasq struct {
 	interimCap      int
 	interimMutex    sync.Mutex
 	processingQueue chan func()
+	queued          int64
 
 	// worker specifics
 	maxWorkers    int
@@ -83,7 +85,7 @@ core:
 		// queues will be blocked at this point. (implement a double ended Q)
 		// There MUST be workers at this point as this queue cannot grow until the
 		// processing queue has had a task and subsequently caused a worker to be spawned.
-		if t.checkForBackPressure() {
+		if t.interimQueueSize() > 0 {
 			if !t.processInterimQueueTask() {
 				break core
 			}
@@ -118,6 +120,7 @@ core:
 				// TODO: This SUCKS right now, improve the data structure and performance/locking.
 				t.interimMutex.Lock()
 				t.interimQueue = append([]func(){inboundTask}, t.interimQueue...)
+				atomic.AddInt64(&t.queued, 1)
 				t.interimMutex.Unlock()
 
 			}
@@ -143,20 +146,10 @@ core:
 	workersRunning.Wait()
 }
 
-// checkForBackPressure checks if the queue for holding tasks to be
-// processed in future is populated.  If it is, there is no point
-// going directly to the channels, this check is utilised to know
-// if we should push onto the holden pen deque in future.
-func (t *Tasq) checkForBackPressure() bool {
-	return len(t.interimQueue) > 0
-}
-
 // interimQueueSize returns the total number of tasks in the interim
 // queue.
 func (t *Tasq) interimQueueSize() int {
-	t.interimMutex.Lock()
-	defer t.interimMutex.Unlock()
-	return len(t.interimQueue)
+	return int(atomic.LoadInt64(&t.queued))
 }
 
 // processInterimQueueTask attempts to take the latest tasks in the interim queue
@@ -169,8 +162,10 @@ func (t *Tasq) processInterimQueueTask() bool {
 	}
 	select {
 	case t.processingQueue <- oldestTask:
+		t.queued--
 		return true
 	default:
+		t.queued--
 		return false
 	}
 }
