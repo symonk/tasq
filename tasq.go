@@ -127,10 +127,7 @@ core:
 				if t.currWorkers < t.maxWorkers {
 					t.startNewWorker(inboundTask, t.processingQueue, &workersRunning)
 				}
-				// Push the task onto the front of the interim queue
-				// For now, we are using a slice here, to be changed out
-				// in future.
-				// TODO: This SUCKS right now, improve the data structure and performance/locking.
+				// Enqueue the task at the head of the internal deque
 				t.interimQueue.PushLeft(inboundTask)
 			}
 			completedTasks = true
