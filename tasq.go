@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/symonk/tasq/internal/contract"
+	"github.com/symonk/tasq/internal/deque"
 )
 
 // Task is a simple function without args or a return value.
@@ -37,7 +38,7 @@ type Tasq struct {
 	// queue specifics
 	submittedQueue chan func()
 	// Uslice for now, but reconsider data structures for future.
-	interimQueue    []func()
+	interimQueue    *deque.Deque[func()]
 	interimCap      int
 	interimMutex    sync.Mutex
 	processingQueue chan func()
@@ -55,8 +56,8 @@ type Tasq struct {
 	exitSignal         chan struct{}
 	workerIdleDuration time.Duration
 
-	once   sync.Once
-	events chan any
+	once    sync.Once
+	results chan any
 }
 
 // Ensure Tasq implements Pooler
@@ -72,17 +73,17 @@ func New(opts ...Option) *Tasq {
 		opt(t)
 	}
 	t.submittedQueue = make(chan func())
-	t.interimQueue = make([]func(), 0)
+	t.interimQueue = deque.New[func()]()
 	t.processingQueue = make(chan func())
 	t.done = make(chan struct{})
 	go t.begin()
 	return t
 }
 
-// Events returns the results event channel where all workers are writing their
+// Results returns the results event channel where all workers are writing their
 // results too.
-func (t *Tasq) Events() chan any {
-	return t.events
+func (t *Tasq) Results() chan any {
+	return t.results
 }
 
 // begin is the core implementation of the worker pool
@@ -130,10 +131,7 @@ core:
 				// For now, we are using a slice here, to be changed out
 				// in future.
 				// TODO: This SUCKS right now, improve the data structure and performance/locking.
-				t.interimMutex.Lock()
-				t.interimQueue = append([]func(){inboundTask}, t.interimQueue...)
-				t.interimMutex.Unlock()
-
+				t.interimQueue.PushLeft(inboundTask)
 			}
 			completedTasks = true
 		case <-workerIdleDuration.C:
@@ -154,15 +152,15 @@ core:
 		// send nil tasks until all workers have been stopped
 		t.Drain()
 	}
+	// TODO: How to manage draining enqueued tasks in the interim queue when requested
+	// version doing a non graceful shutdown and just closing out the worker(s)
 	workersRunning.Wait()
 }
 
 // interimQueueSize returns the total number of tasks in the interim
 // queue.
 func (t *Tasq) interimQueueSize() int {
-	t.interimMutex.Lock()
-	defer t.interimMutex.Unlock()
-	return len(t.interimQueue)
+	return t.interimQueue.Length()
 }
 
 // processInterimQueueTask attempts to take the latest tasks in the interim queue
@@ -170,16 +168,24 @@ func (t *Tasq) interimQueueSize() int {
 // if the task was directly put onto the processing queue returns true, otherwise
 // returns false.
 func (t *Tasq) processInterimQueueTask() bool {
-	// Lock around the critical section only
-	oldestTask := t.interimQueue[t.interimQueueSize()-1]
-	select {
-	case <-t.exitSignal:
-		return false
-	case t.processingQueue <- oldestTask:
-		return true
-	default:
+	headTask, err := t.interimQueue.PopRight()
+	if err != nil {
 		return true
 	}
+	select {
+	case <-t.exitSignal:
+		return true
+	case _, ok := <-t.submittedQueue:
+		if !ok {
+			// The submitted queue has been closed, shutting down state
+			// has been entered.
+			return false
+		}
+	// Attempt to push the task at the head onto the processing queue for processing
+	case t.processingQueue <- headTask:
+		return true
+	}
+	return true
 }
 
 // MaximumConfiguredWorkers returns the maximum number of workers.
@@ -218,6 +224,7 @@ func (t *Tasq) terminate(graceful bool) {
 		t.graceful = graceful
 		t.stoppingMutex.Unlock()
 		close(t.submittedQueue)
+		close(t.results)
 	})
 }
 
