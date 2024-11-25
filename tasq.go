@@ -13,13 +13,20 @@ import (
 // Task types are submitted to the Tasq for processing.
 // At present, users should handle return types and throttling
 // on the client side.
-type Task func()
+type Task func() error
 
 const (
 	// workerIdleTimeout is the default duration that the pool checks for
 	// dormant/idle workers to cause them to be shutdown.
 	workerIdleTimeout = time.Second * 3
 )
+
+// Result is the generic result merged from all the worker goroutines
+// and made available through the Tasq Results() channel.
+type Result[T any] struct {
+	Value T
+	Err   error
+}
 
 // Tasq is the worker pool implementation.  It has
 // three main queues.
@@ -48,7 +55,8 @@ type Tasq struct {
 	exitSignal         chan struct{}
 	workerIdleDuration time.Duration
 
-	once sync.Once
+	once   sync.Once
+	events chan any
 }
 
 // Ensure Tasq implements Pooler
@@ -69,6 +77,12 @@ func New(opts ...Option) *Tasq {
 	t.done = make(chan struct{})
 	go t.begin()
 	return t
+}
+
+// Events returns the results event channel where all workers are writing their
+// results too.
+func (t *Tasq) Events() chan any {
+	return t.events
 }
 
 // begin is the core implementation of the worker pool
