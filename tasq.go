@@ -84,6 +84,9 @@ func New(opts ...Option) *Tasq {
 	t.interimTaskQueue = deque.New[func()]()
 	t.workerTaskQueue = make(chan func())
 	t.done = make(chan struct{})
+	if t.maxWorkers < 1 {
+		t.maxWorkers = 1
+	}
 	go t.begin()
 	return t
 }
