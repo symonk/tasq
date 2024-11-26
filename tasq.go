@@ -137,10 +137,11 @@ core:
 				// the processing queue is not able to accept tasks at the moment.
 				if t.currWorkers < t.maxWorkers {
 					t.startNewWorker(inTask, t.workerTaskQueue, &workerWg)
+				} else {
+					// Enqueue the task at the tail of the internal deque
+					t.interimTaskQueue.PushLeft(inTask)
+					atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
 				}
-				// Enqueue the task at the tail of the internal deque
-				t.interimTaskQueue.PushLeft(inTask)
-				atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
 			}
 			completedTasks = true
 		case <-workerIdleDuration.C:
@@ -215,8 +216,8 @@ func (t *Tasq) Stop() {
 	t.terminate(true)
 }
 
-// Abort immediately, abort queued tasks and exit.
-func (t *Tasq) Abort() {
+// StopAndWait immediately, abort queued tasks and exit.
+func (t *Tasq) StopAndWait() {
 	t.terminate(false)
 }
 
