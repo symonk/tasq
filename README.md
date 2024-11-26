@@ -1,7 +1,7 @@
 <img src="https://github.com/symonk/tasq/blob/main/.github/images/logo.png" border="1" width="275" height="275"/>
 
 [![GoDoc](https://pkg.go.dev/badge/github.com/symonk/tasq)](https://pkg.go.dev/github.com/symonk/tasq)
-[![Build Status](https://github.com/symonk/tasq/actions/workflows/go_test.yml/badge.svg)](https://github.com/symonk/tasq/actions/workflows/test.yml)
+[![Build Status](https://github.com/symonk/tasq/actions/workflows/test.yml/badge.svg)](https://github.com/symonk/tasq/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/symonk/tasq/branch/main/graph/badge.svg)](https://codecov.io/gh/symonk/tasq)
 [![Go Report Card](https://goreportcard.com/badge/github.com/symonk/tasq)](https://goreportcard.com/report/github.com/symonk/tasq)
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://github.com/symonk/tasq/blob/master/LICENSE)
