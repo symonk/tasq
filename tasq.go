@@ -102,7 +102,7 @@ func (t *Tasq) begin() {
 	defer close(t.done)
 	workerIdleDuration := time.NewTimer(3 * time.Second)
 	completedTasks := false
-	var workersRunning sync.WaitGroup
+	var workerWg sync.WaitGroup
 
 core:
 	for {
@@ -135,7 +135,7 @@ core:
 				// Push the task onto the interim queue ready for processing in future.
 				// the processing queue is not able to accept tasks at the moment.
 				if t.currWorkers < t.maxWorkers {
-					t.startNewWorker(inTask, t.workerTaskQueue, &workersRunning)
+					t.startNewWorker(inTask, t.workerTaskQueue, &workerWg)
 				}
 				// Enqueue the task at the tail of the internal deque
 				t.interimTaskQueue.PushLeft(inTask)
@@ -152,16 +152,18 @@ core:
 			completedTasks = false
 		}
 	}
-
 	// Graceful teardown, wait for all workers to finalize
-	workerIdleDuration.Stop()
 	if t.graceful {
 		// send nil tasks until all workers have been stopped
 		t.Drain()
 	}
-	// TODO: How to manage draining enqueued tasks in the interim queue when requested
-	// version doing a non graceful shutdown and just closing out the worker(s)
-	workersRunning.Wait()
+
+	// Terminate all current workers
+	for t.currWorkers > 0 {
+		t.stopWorker()
+	}
+	workerWg.Wait()
+	workerIdleDuration.Stop()
 
 	// TODO: What to do with internal `results` channel at this point.
 }
@@ -248,10 +250,6 @@ func (t *Tasq) Drain() {
 	for t.interimQueueSize() > 0 {
 		t.workerTaskQueue <- t.interimTaskQueue.PopRight()
 		atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
-	}
-
-	for t.currWorkers > 0 {
-		t.stopWorker()
 	}
 }
 
