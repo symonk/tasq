@@ -244,6 +244,12 @@ func (t *Tasq) Stopped() bool {
 // a graceful shutdown of the worker pool after all tasks
 // in flight have been processed.
 func (t *Tasq) Drain() {
+	// flush out the interim queue until it is completely empty
+	for t.interimQueueSize() > 0 {
+		t.workerTaskQueue <- t.interimTaskQueue.PopRight()
+		atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
+	}
+
 	for t.currWorkers > 0 {
 		t.stopWorker()
 	}
