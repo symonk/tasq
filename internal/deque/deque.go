@@ -33,13 +33,14 @@ func (d *Deque[T]) PushLeft(element T) {
 // PopRight removes the head element of the deque.
 // This is synchronised internally.
 func (d *Deque[T]) PopRight() (T, error) {
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	if d.Length() == 0 {
+	l := d.Length()
+	if l == 0 {
 		var t T
 		return t, ErrEmptyDeque
 	}
+	d.mu.RLock()
 	item := d.internal[len(d.internal)-1]
+	d.mu.RUnlock()
 	return item, nil
 }
 

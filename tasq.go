@@ -143,7 +143,6 @@ core:
 			// scale down one worker, down to zero.
 			if completedTasks && t.currWorkers > 0 {
 				t.stopWorker()
-				t.currWorkers--
 			}
 			workerIdleDuration.Reset(3 * time.Second)
 			completedTasks = false
@@ -246,7 +245,7 @@ func (t *Tasq) Stopped() bool {
 // in flight have been processed.
 func (t *Tasq) Drain() {
 	for t.currWorkers > 0 {
-		t.workerTaskQueue <- nil
+		t.stopWorker()
 	}
 }
 
@@ -278,12 +277,13 @@ func (t *Tasq) Submit(task func()) {
 // is responsible for writing results onto a channel or some other synchronisation
 // mechanism.
 func (t *Tasq) SubmitWait(task func()) {
+	// TODO: stopped mutex?
 	if task != nil && !t.stopped {
 		done := make(chan struct{})
-		t.submittedTaskQueue <- func() {
-			defer close(done)
-			t.Submit(task)
-		}
+		t.Submit(func() {
+			task()
+			close(done)
+		})
 		<-done
 	}
 }
@@ -293,10 +293,8 @@ func (t *Tasq) SubmitWait(task func()) {
 func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.WaitGroup) {
 	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		worker(task, processingQ, wg)
 	}()
-	fmt.Println("started a worker...")
 	t.currWorkers++
 }
 
@@ -307,6 +305,7 @@ func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.W
 func (t *Tasq) stopWorker() bool {
 	select {
 	case t.workerTaskQueue <- nil:
+		t.currWorkers--
 		return true
 	default:
 		return false
