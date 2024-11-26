@@ -14,13 +14,12 @@ func TestMaximumWorkersIsCorrect(t *testing.T) {
 }
 
 func TestProofOfConcept(t *testing.T) {
-	p := New(WithMaxWorkers(1))
-	for i := 0; i < 40; i++ {
-		f := func() {
-			time.Sleep(time.Millisecond)
-		}
-		p.Submit(f)
+	p := New(WithMaxWorkers(20))
+	for i := 0; i < 100; i++ {
+		p.Submit(func() {
+			time.Sleep(time.Second * 1)
+		})
 	}
-	time.Sleep(time.Second * 5)
+	time.Sleep(time.Second * 20)
 	p.Stop()
 }

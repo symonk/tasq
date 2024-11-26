@@ -131,6 +131,7 @@ core:
 			// Queue the task directly to workers if not blocking
 			// if no workers have been spawned, this won't be selected.
 			case t.workerTaskQueue <- inTask:
+				fmt.Println("pushed a task directly into workers, no need to store interim.")
 			default:
 				// Push the task onto the interim queue ready for processing in future.
 				// the processing queue is not able to accept tasks at the moment.
@@ -187,6 +188,7 @@ func (t *Tasq) processInterimQueueTask() bool {
 		t.interimTaskQueue.PushLeft(task)
 	// Pop off the deque and store it directly in the worker task queue
 	case t.workerTaskQueue <- t.interimTaskQueue.PopRight():
+		fmt.Println("Moved task from interim to worker queue")
 	}
 	atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
 	return true
@@ -311,8 +313,10 @@ func (t *Tasq) stopWorker() bool {
 	select {
 	case t.workerTaskQueue <- nil:
 		t.currWorkers--
+		fmt.Println("stopped worker")
 		return true
 	default:
+		fmt.Println("didnt stop worker.")
 		return false
 	}
 }
@@ -324,9 +328,9 @@ func (t *Tasq) stopWorker() bool {
 // user defined enqueuing does not allow nil tasks, this is special behaviour
 // internally.
 func worker(task func(), workerQueue <-chan func(), wg *sync.WaitGroup) {
-	fmt.Println("launched worker")
 	defer wg.Done()
 	for task != nil {
+		fmt.Printf("worker with task: %p\n", task)
 		task()
 		fmt.Println("worker ran a task...")
 		task = <-workerQueue
