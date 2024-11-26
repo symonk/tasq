@@ -148,7 +148,7 @@ core:
 			if completedTasks && t.currWorkers > 0 {
 				t.stopWorker()
 			}
-			workerIdleDuration.Reset(3 * time.Second)
+			workerIdleDuration.Reset(t.idleDurationWindow)
 			completedTasks = false
 		}
 	}
@@ -307,6 +307,7 @@ func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.W
 // the cost for worker creation is trivial in the larger
 // scheme of things.
 func (t *Tasq) stopWorker() bool {
+	fmt.Println("scaling down workers...")
 	select {
 	case t.workerTaskQueue <- nil:
 		t.currWorkers--
