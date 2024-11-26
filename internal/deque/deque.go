@@ -32,16 +32,14 @@ func (d *Deque[T]) PushLeft(element T) {
 
 // PopRight removes the head element of the deque.
 // This is synchronised internally.
-func (d *Deque[T]) PopRight() (T, error) {
-	l := d.Length()
-	if l == 0 {
-		var t T
-		return t, ErrEmptyDeque
-	}
-	d.mu.RLock()
+// TODO: not erroring here because of case return types
+// and we are only calling it after checking len
+func (d *Deque[T]) PopRight() T {
+	d.mu.Lock()
 	item := d.internal[len(d.internal)-1]
-	d.mu.RUnlock()
-	return item, nil
+	d.internal = d.internal[:len(d.internal)-1]
+	d.mu.Unlock()
+	return item
 }
 
 // Length returns the length of the Deque.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/symonk/tasq/internal/contract"
@@ -48,7 +49,7 @@ type Tasq struct {
 	// worker queue specifics, attributes relating to the final queue that are ranged
 	// over by spawned workers.
 	workerTaskQueue chan func()
-	queued          int64
+	queued          int32
 
 	// worker specifics
 	maxWorkers  int
@@ -117,9 +118,9 @@ core:
 		// look to read one from the incoming queue and slot it directly onto our
 		// processing queue.
 		select {
-		case inboundTask, ok := <-t.submittedTaskQueue:
-			if !ok {
-				// Stop() has been invoked at some point, the submitted channel has been closed,
+		case inTask, hasNotBeenStopped := <-t.submittedTaskQueue:
+			if !hasNotBeenStopped {
+				// Stop()/Abort() has been invoked at some point, the submitted channel has been closed,
 				// get out and wait for workers to be finalized, nil tasks are distributed to all
 				// of them.
 				break core
@@ -127,15 +128,16 @@ core:
 			select {
 			// Queue the task directly to workers if not blocking
 			// if no workers have been spawned, this won't be selected.
-			case t.workerTaskQueue <- inboundTask:
+			case t.workerTaskQueue <- inTask:
 			default:
 				// Push the task onto the interim queue ready for processing in future.
 				// the processing queue is not able to accept tasks at the moment.
 				if t.currWorkers < t.maxWorkers {
-					t.startNewWorker(inboundTask, t.workerTaskQueue, &workersRunning)
+					t.startNewWorker(inTask, t.workerTaskQueue, &workersRunning)
 				}
-				// Enqueue the task at the head of the internal deque
-				t.interimTaskQueue.PushLeft(inboundTask)
+				// Enqueue the task at the tail of the internal deque
+				t.interimTaskQueue.PushLeft(inTask)
+				atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
 			}
 			completedTasks = true
 		case <-workerIdleDuration.C:
@@ -168,28 +170,21 @@ func (t *Tasq) interimQueueSize() int {
 	return t.interimTaskQueue.Length()
 }
 
-// processInterimQueueTask attempts to take the latest tasks in the interim queue
-// and move it into the processing queue.
-// if the task was directly put onto the processing queue returns true, otherwise
-// returns false.
+// processInterimQueueTask is responsible for moving a task from the waiting
+// interim queue into the worker queue (or building up the interim queue internally).
+// if the instance has been stopped, returns false.
 func (t *Tasq) processInterimQueueTask() bool {
-	headTask, err := t.interimTaskQueue.PopRight()
-	if err != nil {
-		return true
-	}
 	select {
-	case <-t.exitCh:
-		return true
-	case _, ok := <-t.submittedTaskQueue:
+	// check if we have an incoming task and enqueue it
+	case task, ok := <-t.submittedTaskQueue:
 		if !ok {
-			// The submitted queue has been closed, shutting down state
-			// has been entered.
 			return false
 		}
-	// Attempt to push the task at the head onto the processing queue for processing
-	case t.workerTaskQueue <- headTask:
-		return true
+		t.interimTaskQueue.PushLeft(task)
+	// Pop off the deque and store it directly in the worker task queue
+	case t.workerTaskQueue <- t.interimTaskQueue.PopRight():
 	}
+	atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
 	return true
 }
 
@@ -267,7 +262,7 @@ func (t *Tasq) Throttle(ctx context.Context) {
 // is not blocking, if you wish to wait until the task has been
 // processed, use EnqueueWait() instead.
 func (t *Tasq) Submit(task func()) {
-	if task != nil && !t.stopped {
+	if task != nil {
 		t.submittedTaskQueue <- task
 	}
 }
@@ -279,15 +274,15 @@ func (t *Tasq) Submit(task func()) {
 // is responsible for writing results onto a channel or some other synchronisation
 // mechanism.
 func (t *Tasq) SubmitWait(task func()) {
-	// TODO: stopped mutex?
-	if task != nil && !t.stopped {
-		done := make(chan struct{})
-		t.Submit(func() {
-			task()
-			close(done)
-		})
-		<-done
+	if task == nil {
+		return
 	}
+	done := make(chan struct{})
+	t.submittedTaskQueue <- (func() {
+		task()
+		close(done)
+	})
+	<-done
 }
 
 // startNewWorker spawns a new worker in a goroutine ready when handle tasks
@@ -321,10 +316,11 @@ func (t *Tasq) stopWorker() bool {
 // user defined enqueuing does not allow nil tasks, this is special behaviour
 // internally.
 func worker(task func(), workerQueue <-chan func(), wg *sync.WaitGroup) {
+	fmt.Println("launched worker")
 	defer wg.Done()
 	for task != nil {
 		task()
-		fmt.Println("worked ran a task...")
+		fmt.Println("worker ran a task...")
 		task = <-workerQueue
 	}
 }
