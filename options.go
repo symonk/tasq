@@ -18,7 +18,7 @@ func WithMaxWorkers(max int) Option {
 // can be scaled down to zero.
 func WithWorkerCheckDuration(dur time.Duration) Option {
 	return func(t *Tasq) {
-		t.workerIdleDuration = dur
+		t.idleDurationWindow = dur
 	}
 }
 
