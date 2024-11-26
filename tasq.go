@@ -58,7 +58,6 @@ type Tasq struct {
 	// shutdown specifics
 	done          chan struct{}
 	graceful      bool
-	exitCh        chan struct{}
 	stopped       bool
 	stoppingMutex sync.Mutex
 
@@ -224,6 +223,7 @@ func (t *Tasq) terminate(graceful bool) {
 	t.once.Do(func() {
 		t.stoppingMutex.Lock()
 		t.stopped = true
+		fmt.Printf("tasks in queue: %d\n", t.interimQueueSize())
 		t.graceful = graceful
 		t.stoppingMutex.Unlock()
 		close(t.submittedTaskQueue)
