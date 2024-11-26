@@ -230,6 +230,8 @@ func (t *Tasq) terminate(graceful bool) {
 		t.stoppingMutex.Unlock()
 		close(t.submittedTaskQueue)
 	})
+	// wait for begin() to exit.
+	<-t.done
 }
 
 // Stopped returns the stopped state of the Tasq instance.
