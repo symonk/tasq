@@ -9,12 +9,12 @@ import (
 
 func TestMaximumWorkersIsCorrect(t *testing.T) {
 	limit := 10
-	pool := New(WithMaxWorkers(limit))
-	assert.Equal(t, pool.maxWorkers, limit)
+	p := New(limit)
+	assert.Equal(t, p.maxWorkers, limit)
 }
 
 func TestProofOfConcept(t *testing.T) {
-	p := New(WithMaxWorkers(20))
+	p := New(20)
 	for i := 0; i < 100; i++ {
 		p.Submit(func() {
 			time.Sleep(time.Millisecond)

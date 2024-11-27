@@ -21,11 +21,3 @@ func WithWorkerCheckDuration(dur time.Duration) Option {
 		t.idleDurationWindow = dur
 	}
 }
-
-// WithInterimQueueCapacity sets the capcity of the interim queue.
-// Currently implemented as a slice, but soon to change.
-func WithInterimQueueCapacity(cap int) Option {
-	return func(t *Tasq) {
-		t.interimCap = cap
-	}
-}

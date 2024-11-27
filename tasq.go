@@ -43,13 +43,11 @@ type Tasq struct {
 	// interimTaskQueue specifics, attributes relating to the store that has backpressure
 	// when the processing (final) queue is blocking/full.
 	interimTaskQueue *deque.Deque[func()]
-	interimCap       int
-	interimMutex     sync.Mutex
 
 	// worker queue specifics, attributes relating to the final queue that are ranged
 	// over by spawned workers.
-	workerTaskQueue chan func()
-	queued          int32
+	workerTaskQueue     chan func()
+	tasksInInterimQueue int32
 
 	// worker specifics
 	maxWorkers  int
@@ -73,20 +71,26 @@ var _ contract.Pooler = (*Tasq)(nil)
 // New instantiates a new Tasq instance and applies the
 // appropriate functional options to it.
 // Returns the new instances of Tasq
-func New(opts ...Option) *Tasq {
+func New(maxWorkers int, opts ...Option) *Tasq {
 	t := &Tasq{}
+
+	if maxWorkers < 1 {
+		t.maxWorkers = 1
+	} else {
+		t.maxWorkers = maxWorkers
+	}
+
 	t.idleDurationWindow = workerIdleTimeout
+
 	for _, opt := range opts {
 		opt(t)
 	}
+
 	t.submittedTaskQueue = make(chan func())
 	t.interimTaskQueue = deque.New[func()]()
 	t.workerTaskQueue = make(chan func())
 	t.results = make(chan any)
 	t.done = make(chan struct{})
-	if t.maxWorkers < 1 {
-		t.maxWorkers = 1
-	}
 	go t.begin()
 	return t
 }
@@ -141,7 +145,7 @@ core:
 				} else {
 					// Enqueue the task at the tail of the internal deque
 					t.interimTaskQueue.PushLeft(inTask)
-					atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
+					atomic.StoreInt32(&t.tasksInInterimQueue, int32(t.interimQueueSize()))
 				}
 			}
 			completedTasks = true
@@ -191,7 +195,7 @@ func (t *Tasq) processInterimQueueTask() bool {
 	case t.workerTaskQueue <- t.interimTaskQueue.PopRight():
 		fmt.Println("Moved task from interim to worker queue")
 	}
-	atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
+	atomic.StoreInt32(&t.tasksInInterimQueue, int32(t.interimQueueSize()))
 	return true
 }
 
@@ -252,7 +256,7 @@ func (t *Tasq) Drain() {
 	// flush out the interim queue until it is completely empty
 	for t.interimQueueSize() > 0 {
 		t.workerTaskQueue <- t.interimTaskQueue.PopRight()
-		atomic.StoreInt32(&t.queued, int32(t.interimQueueSize()))
+		atomic.StoreInt32(&t.tasksInInterimQueue, int32(t.interimQueueSize()))
 	}
 }
 
