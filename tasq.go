@@ -285,7 +285,13 @@ func (t *Tasq) Throttle(ctx context.Context) {
 		stalled.Add(1)
 		t.Submit(func() {
 			defer stalled.Done()
-			<-ctx.Done()
+			select {
+			case <-ctx.Done():
+				// user defined context has cancelled/deadlined.
+			case <-t.breakout:
+				// .Stop() has been called on the pool and
+				// it should exit a throttled state.
+			}
 		})
 	}
 	stalled.Wait()
