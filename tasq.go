@@ -2,7 +2,6 @@ package tasq
 
 import (
 	"context"
-	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -63,6 +62,7 @@ type Tasq struct {
 	results            chan any
 	once               sync.Once
 	idleDurationWindow time.Duration
+	breakout           chan struct{}
 }
 
 // Ensure Tasq implements Pooler
@@ -89,6 +89,7 @@ func New(maxWorkers int, opts ...Option) *Tasq {
 	t.submittedTaskQueue = make(chan func())
 	t.interimTaskQueue = deque.New[func()]()
 	t.workerTaskQueue = make(chan func())
+	t.breakout = make(chan struct{})
 	t.results = make(chan any)
 	t.done = make(chan struct{})
 	go t.begin()
@@ -136,7 +137,6 @@ core:
 			// Queue the task directly to workers if not blocking
 			// if no workers have been spawned, this won't be selected.
 			case t.workerTaskQueue <- inTask:
-				fmt.Println("pushed a task directly into workers, no need to store interim.")
 			default:
 				// Push the task onto the interim queue ready for processing in future.
 				// the processing queue is not able to accept tasks at the moment.
@@ -193,7 +193,6 @@ func (t *Tasq) processInterimQueueTask() bool {
 		t.interimTaskQueue.PushLeft(task)
 	// Pop off the deque and store it directly in the worker task queue
 	case t.workerTaskQueue <- t.interimTaskQueue.PopRight():
-		fmt.Println("Moved task from interim to worker queue")
 	}
 	atomic.StoreInt32(&t.tasksInInterimQueue, int32(t.interimQueueSize()))
 	return true
@@ -232,9 +231,9 @@ func (t *Tasq) terminate(graceful bool) {
 	t.once.Do(func() {
 		t.stoppingMutex.Lock()
 		t.stopped = true
-		fmt.Printf("tasks in queue: %d\n", t.interimQueueSize())
-		t.graceful = graceful
 		t.stoppingMutex.Unlock()
+		t.graceful = graceful
+		close(t.breakout)
 		close(t.submittedTaskQueue)
 	})
 	// wait for begin() to exit.
@@ -260,6 +259,14 @@ func (t *Tasq) Drain() {
 	}
 }
 
+// IsStopped returns the stopped state of the instance.
+// This method is sychronised internally.
+func (t *Tasq) IsStopped() bool {
+	t.stoppingMutex.Lock()
+	defer t.stoppingMutex.Unlock()
+	return t.stopped
+}
+
 // Throttle causes blocking across the workers until
 // the given context is cancelled/timed out.  This allows
 // temporarily throttling the queue tasks.  Right now the
@@ -268,7 +275,20 @@ func (t *Tasq) Drain() {
 // of tasks will remain attempted until the halt propagates.
 // TODO: Consider a way of doing this with immediate halting
 func (t *Tasq) Throttle(ctx context.Context) {
-	select {}
+	if t.IsStopped() {
+		return
+	}
+
+	var stalled sync.WaitGroup
+
+	for i := 0; i < t.maxWorkers; i++ {
+		stalled.Add(1)
+		t.Submit(func() {
+			defer stalled.Done()
+			<-ctx.Done()
+		})
+	}
+	stalled.Wait()
 }
 
 // Submit is responsible for preparing a user defined task to
@@ -314,14 +334,11 @@ func (t *Tasq) startNewWorker(task func(), processingQ <-chan func(), wg *sync.W
 // the cost for worker creation is trivial in the larger
 // scheme of things.
 func (t *Tasq) stopWorker() bool {
-	fmt.Println("scaling down workers...")
 	select {
 	case t.workerTaskQueue <- nil:
 		t.currWorkers--
-		fmt.Println("stopped worker")
 		return true
 	default:
-		fmt.Println("didnt stop worker.")
 		return false
 	}
 }
@@ -335,9 +352,7 @@ func (t *Tasq) stopWorker() bool {
 func worker(task func(), workerQueue <-chan func(), wg *sync.WaitGroup) {
 	defer wg.Done()
 	for task != nil {
-		fmt.Printf("worker with task: %p\n", task)
 		task()
-		fmt.Println("worker ran a task...")
 		task = <-workerQueue
 	}
 }
