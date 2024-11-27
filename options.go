@@ -2,6 +2,7 @@ package tasq
 
 import "time"
 
+// Option are functional options for configuring the Tasq instance.
 type Option func(t *Tasq)
 
 // WithMaxWorkers sets the maximum number of workers

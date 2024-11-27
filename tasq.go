@@ -259,14 +259,6 @@ func (t *Tasq) Drain() {
 	}
 }
 
-// IsStopped returns the stopped state of the instance.
-// This method is sychronised internally.
-func (t *Tasq) IsStopped() bool {
-	t.stoppingMutex.Lock()
-	defer t.stoppingMutex.Unlock()
-	return t.stopped
-}
-
 // Throttle causes blocking across the workers until
 // the given context is cancelled/timed out.  This allows
 // temporarily throttling the queue tasks.  Right now the
@@ -275,7 +267,7 @@ func (t *Tasq) IsStopped() bool {
 // of tasks will remain attempted until the halt propagates.
 // TODO: Consider a way of doing this with immediate halting
 func (t *Tasq) Throttle(ctx context.Context) {
-	if t.IsStopped() {
+	if t.Stopped() {
 		return
 	}
 
