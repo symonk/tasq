@@ -82,6 +82,7 @@ func New(opts ...Option) *Tasq {
 	t.submittedTaskQueue = make(chan func())
 	t.interimTaskQueue = deque.New[func()]()
 	t.workerTaskQueue = make(chan func())
+	t.results = make(chan any)
 	t.done = make(chan struct{})
 	if t.maxWorkers < 1 {
 		t.maxWorkers = 1
@@ -263,7 +264,7 @@ func (t *Tasq) Drain() {
 // of tasks will remain attempted until the halt propagates.
 // TODO: Consider a way of doing this with immediate halting
 func (t *Tasq) Throttle(ctx context.Context) {
-
+	select {}
 }
 
 // Submit is responsible for preparing a user defined task to
