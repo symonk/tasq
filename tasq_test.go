@@ -10,7 +10,7 @@ import (
 func TestMaximumWorkersIsCorrect(t *testing.T) {
 	limit := 10
 	p := New(limit)
-	assert.Equal(t, p.maxWorkers, limit)
+	assert.Equal(t, p.MaximumWorkers(), limit)
 }
 
 func TestProofOfConcept(t *testing.T) {

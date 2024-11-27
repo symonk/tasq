@@ -199,11 +199,11 @@ func (t *Tasq) processInterimQueueTask() bool {
 	return true
 }
 
-// MaximumConfiguredWorkers returns the maximum number of workers.
+// MaximumWorkers returns the maximum number of workers.
 // workers can be scaled depending on demand, so while
 // use ActiveWorkers() to get the current actual number
 // of active workers
-func (t *Tasq) MaximumConfiguredWorkers() int {
+func (t *Tasq) MaximumWorkers() int {
 	return t.maxWorkers
 }
 
