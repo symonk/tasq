@@ -166,8 +166,7 @@ core:
 	}
 	workerWg.Wait()
 	workerIdleDuration.Stop()
-
-	// TODO: What to do with internal `results` channel at this point.
+	close(t.results)
 }
 
 // interimQueueSize returns the total number of tasks in the interim
